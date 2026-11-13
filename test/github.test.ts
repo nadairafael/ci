@@ -196,3 +196,22 @@ it.effect("gravarComentario com soEditar não cria quando não existe", () => {
     expect(chamadas.map((c) => c.metodo)).toEqual(["GET"])
   }).pipe(Effect.provide(layer))
 })
+
+it.effect("com tokenStatus, só o status vai com o token do App; o resto, com o token do job", () => {
+  const fake = httpFalso(API, {
+    "POST /repos/o/r/statuses/sha1": { status: 201, json: {} },
+    "GET /repos/o/r/issues/1/comments?per_page=100&page=1": { status: 200, json: [] },
+    "POST /repos/o/r/issues/1/comments": { status: 201, json: {} },
+  })
+  const layer = githubLive({ ...acesso, tokenStatus: "app" }).pipe(Layer.provide(fake.layer))
+  return Effect.gen(function* () {
+    const gh = yield* GitHub
+    yield* gh.gravarStatus("sha1", "success", "ok", "https://run")
+    yield* gh.gravarComentario(1, "x")
+    expect(fake.chamadas.map((c) => [c.metodo, c.url.split("?")[0], c.autorizacao])).toEqual([
+      ["POST", "/repos/o/r/statuses/sha1", "Bearer app"],
+      ["GET", "/repos/o/r/issues/1/comments", "Bearer t"],
+      ["POST", "/repos/o/r/issues/1/comments", "Bearer t"],
+    ])
+  }).pipe(Effect.provide(layer))
+})

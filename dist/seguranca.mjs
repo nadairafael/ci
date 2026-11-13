@@ -26992,13 +26992,13 @@ var githubLive = (acesso) => Layer_exports.effect(
   Effect_exports.gen(function* () {
     const http = yield* HttpClient_exports.HttpClient;
     const marcador = acesso.marcador ?? MARCADOR;
-    const pedir = (metodo, caminho, corpo) => {
+    const pedir = (metodo, caminho, corpo, token = acesso.token) => {
       const base = HttpClientRequest_exports.make(metodo)(`${acesso.api}${caminho}`).pipe(
         HttpClientRequest_exports.setHeaders({
           Accept: "application/vnd.github+json",
           "X-GitHub-Api-Version": "2022-11-28"
         }),
-        HttpClientRequest_exports.bearerToken(acesso.token)
+        HttpClientRequest_exports.bearerToken(token)
       );
       const request3 = corpo === void 0 ? base : HttpClientRequest_exports.bodyJsonUnsafe(base, corpo);
       const falhou = (detalhe, status) => new ErroApi({ mensagem: `${metodo} ${caminho} ${detalhe}`, ...status === void 0 ? {} : { status } });
@@ -27023,7 +27023,7 @@ var githubLive = (acesso) => Layer_exports.effect(
         )
       )
     );
-    const escrever = (metodo, caminho, corpo) => pedir(metodo, caminho, corpo).pipe(
+    const escrever = (metodo, caminho, corpo, token) => pedir(metodo, caminho, corpo, token).pipe(
       Effect_exports.flatMap(Option_exports.match({
         onNone: () => Effect_exports.fail(new ErroApi({ mensagem: `${metodo} ${caminho} respondeu 404` })),
         onSome: () => Effect_exports.void
@@ -27100,7 +27100,7 @@ var githubLive = (acesso) => Layer_exports.effect(
         context: acesso.contexto ?? "portao",
         description: descricao,
         target_url: url
-      })
+      }, acesso.tokenStatus || void 0)
     });
   })
 );

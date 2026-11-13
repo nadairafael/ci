@@ -19,6 +19,7 @@ O portão roda nas máquinas do GitHub, responde em segundos e escreve o motivo 
      workflow_dispatch:
        inputs:
          pr: { description: Número do PR, type: number, required: true }
+         sha: { description: SHA do head do PR, type: string, required: false }
    concurrency:
      # Um grupo por PR. O disparo manual e o `edited` sem troca de base (que o portão pula) ficam num
      # grupo só deles: nunca cancelam um run de verdade, nem são cancelados.
@@ -36,6 +37,7 @@ O portão roda nas máquinas do GitHub, responde em segundos e escreve o motivo 
        uses: nadairafael/ci/.github/workflows/portao.yml@v1
        with:
          pr: ${{ format('{0}', inputs.pr) }}
+         sha: ${{ inputs.sha }}
    ```
 
    O `pull_request_target` é seguro aqui porque o portão não baixa nem roda nada do PR: ele só lê o PR pela API. Ele não serve para o `seguranca.yml`, que roda as ferramentas no código do PR. O `edited` faz o portão rodar de novo quando o PR muda de base, e só nesse caso. Um caller antigo, com `pull_request`, continua funcionando.
@@ -45,9 +47,32 @@ O portão roda nas máquinas do GitHub, responde em segundos e escreve o motivo 
 
 Se o repo exige checks por ruleset, exija o contexto **`portao`** (o commit status), não o check do job (`portao / portao`).
 
+### Status que só o portão grava (opcional, GitHub App)
+
+Sem isto, qualquer workflow com `statuses: write` consegue gravar um status `portao`, inclusive um workflow novo adicionado no próprio PR. Com um GitHub App do portão, o ruleset passa a exigir o `portao` **vindo do App**. A chave do App fica num environment que só o branch padrão alcança: um workflow do PR roda em outra ref, não lê a chave, e um status que ele grave não libera o merge.
+
+1. Criar um GitHub App na sua conta com uma permissão só, **Commit statuses: Read and write**, sem webhook, e instalar no repo. Anotar o *Client ID* e gerar uma chave privada.
+2. No repo, criar o environment `portao` com **Deployment branches and tags → Selected branches: `main`**, e guardar a chave nele como o secret `PORTAO_APP_KEY`.
+3. No caller acima, passar o App e o environment:
+
+   ```yaml
+       uses: nadairafael/ci/.github/workflows/portao.yml@v1
+       with:
+         pr: ${{ format('{0}', inputs.pr) }}
+         sha: ${{ inputs.sha }}
+         ambiente: portao
+         app-client-id: <Client ID do App>
+       secrets:
+         PORTAO_APP_KEY: ${{ secrets.PORTAO_APP_KEY }}
+   ```
+
+4. No ruleset, na checagem `portao`, trocar a origem de "any source" para o App.
+
+Um disparo manual precisa rodar no branch padrão, onde o environment deixa: `gh workflow run portao.yml --ref main -f pr=<n> -f sha=<head do PR>`. O `sha` garante que um disparo para um head que já mudou nunca aprova o head novo. Se o caller pede o App e o token não sai (chave errada, App fora do repo), o portão reprova dizendo o que conferir.
+
 ## Regras (`.github/portao.json`)
 
-Nenhuma regra fica ligada sem config. O arquivo é lido do **branch base** do PR. Por isso, mudar o config num PR só vale depois do merge, e o PR não consegue afrouxar o próprio portão. Um PR que mexe no `portao.json` ou em qualquer arquivo de `.github/workflows/` recebe um aviso de "olho humano" no comentário: qualquer workflow pode gravar o status `portao`, e em conta pessoal nada impede um workflow novo do PR de fazer isso.
+Nenhuma regra fica ligada sem config. O arquivo é lido do **branch base** do PR. Por isso, mudar o config num PR só vale depois do merge, e o PR não consegue afrouxar o próprio portão. Um PR que mexe no `portao.json` ou em qualquer arquivo de `.github/workflows/` recebe um aviso de "olho humano" no comentário: qualquer workflow pode gravar o status `portao`. Para que só o portão consiga, veja "Status que só o portão grava".
 
 | Campo | O que faz |
 |---|---|

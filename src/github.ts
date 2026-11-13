@@ -38,6 +38,9 @@ export interface Acesso {
   readonly api: string
   readonly repo: string
   readonly token: string
+  // Writes the commit status when given: the token of the gate's GitHub App, so a ruleset can require
+  // the status from that App and a status written by any other workflow does not count.
+  readonly tokenStatus?: string | undefined
   // The commit status context and the comment marker; the gate's own by default.
   readonly contexto?: string
   readonly marcador?: string
@@ -66,13 +69,13 @@ export const githubLive = (acesso: Acesso): Layer.Layer<GitHub, never, HttpClien
       const marcador = acesso.marcador ?? MARCADOR
 
       // One API call. 404 is returned as None when `aceita404`; any other non-2xx is an ErroApi.
-      const pedir = (metodo: "GET" | "POST" | "PATCH", caminho: string, corpo?: unknown) => {
+      const pedir = (metodo: "GET" | "POST" | "PATCH", caminho: string, corpo?: unknown, token = acesso.token) => {
         const base = HttpClientRequest.make(metodo)(`${acesso.api}${caminho}`).pipe(
           HttpClientRequest.setHeaders({
             Accept: "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
           }),
-          HttpClientRequest.bearerToken(acesso.token),
+          HttpClientRequest.bearerToken(token),
         )
         const request = corpo === undefined ? base : HttpClientRequest.bodyJsonUnsafe(base, corpo)
         const falhou = (detalhe: string, status?: number) =>
@@ -110,8 +113,8 @@ export const githubLive = (acesso: Acesso): Layer.Layer<GitHub, never, HttpClien
           ),
         )
 
-      const escrever = (metodo: "POST" | "PATCH", caminho: string, corpo: unknown) =>
-        pedir(metodo, caminho, corpo).pipe(
+      const escrever = (metodo: "POST" | "PATCH", caminho: string, corpo: unknown, token?: string) =>
+        pedir(metodo, caminho, corpo, token).pipe(
           Effect.flatMap(Option.match({
             onNone: () => Effect.fail(new ErroApi({ mensagem: `${metodo} ${caminho} respondeu 404` })),
             onSome: () => Effect.void,
@@ -210,7 +213,7 @@ export const githubLive = (acesso: Acesso): Layer.Layer<GitHub, never, HttpClien
             context: acesso.contexto ?? "portao",
             description: descricao,
             target_url: url,
-          }),
+          }, acesso.tokenStatus || undefined),
       })
     }),
   )

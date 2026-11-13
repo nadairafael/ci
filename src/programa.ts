@@ -14,9 +14,17 @@ export interface Ambiente {
   readonly dono: string
   readonly runUrl: string
   readonly prNumero: string | undefined
+  // workflow_dispatch only: the PR head the dispatch is for. Lets a caller dispatch on its default
+  // branch (where the App's environment lives) and still never pass a head that moved.
+  readonly prSha: string | undefined
+  // The caller asked for the App (app-client-id) and no App token came out: the gate fails and says why.
+  readonly appSemToken?: string | undefined
   readonly log: (linha: string) => void
   readonly anexarSummary: (texto: string) => void
 }
+
+// The commit a dispatched run is for: the `sha` input when given, otherwise the run's own commit.
+const shaDoRun = (amb: Ambiente): string => amb.prSha ?? amb.sha
 
 class Motivo extends Data.TaggedError("Motivo")<{ readonly mensagem: string }> {}
 
@@ -46,9 +54,17 @@ export const programa = (amb: Ambiente): Effect.Effect<{ readonly ok: boolean },
     const lido = yield* lerPrDoEvento(amb).pipe(Effect.result)
     if (lido._tag === "Failure") {
       const r = falhaSemPr(lido.failure._tag === "Motivo" ? lido.failure.mensagem : `O portão não conseguiu ler o PR: ${lido.failure.mensagem}`)
-      return yield* publicar(amb, r, undefined, undefined, amb.sha)
+      return yield* publicar(amb, r, undefined, undefined, amb.evento === "workflow_dispatch" ? shaDoRun(amb) : amb.sha)
     }
     const pr = lido.success
+    // A dispatched run for a head that has since moved judges an old commit: its failure goes on that
+    // commit, and it leaves the comment alone, so it never overwrites the verdict on the new head.
+    const obsoleto = amb.evento === "workflow_dispatch" && pr.head.sha !== shaDoRun(amb)
+    const numero = obsoleto ? undefined : pr.number
+    const alvo = obsoleto ? shaDoRun(amb) : pr.head.sha
+    if (amb.appSemToken !== undefined) {
+      return yield* publicar(amb, falhaSemPr(amb.appSemToken), undefined, numero, alvo)
+    }
 
     const avaliado = yield* Effect.gen(function* () {
       const [config, arquivos] = yield* Effect.all([gh.lerConfig(pr.base.sha), gh.lerArquivos(pr.number)], {
@@ -65,7 +81,7 @@ export const programa = (amb: Ambiente): Effect.Effect<{ readonly ok: boolean },
         autor: pr.user.login,
         headRef: pr.head.ref,
         headSha: pr.head.sha,
-        shaDoRun: amb.evento === "workflow_dispatch" ? amb.sha : undefined,
+        shaDoRun: amb.evento === "workflow_dispatch" ? shaDoRun(amb) : undefined,
         changedFiles: pr.changed_files,
         arquivos,
       })
@@ -78,16 +94,7 @@ export const programa = (amb: Ambiente): Effect.Effect<{ readonly ok: boolean },
         })
       ),
     )
-    // A dispatched run for a head that has since moved judges an old commit: its failure goes on that
-    // commit, and it leaves the comment alone, so it never overwrites the verdict on the new head.
-    const obsoleto = amb.evento === "workflow_dispatch" && pr.head.sha !== amb.sha
-    return yield* publicar(
-      amb,
-      avaliado.r,
-      avaliado.config,
-      obsoleto ? undefined : pr.number,
-      obsoleto ? amb.sha : pr.head.sha,
-    )
+    return yield* publicar(amb, avaliado.r, avaliado.config, numero, alvo)
   })
 
 // Comment, commit status, annotations and summary. A failed write is a warning: the verdict stands.

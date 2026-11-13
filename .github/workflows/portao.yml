@@ -16,15 +16,39 @@ on:
         type: string
         default: ''
         required: false
+      sha:
+        description: SHA do head do PR que o disparo avalia (só no workflow_dispatch do caller)
+        type: string
+        default: ''
+        required: false
+      # Optional: the gate's own GitHub App writes the «portao» status, so a ruleset can require it from
+      # that App. Its key lives in an environment limited to the default branch: a workflow added by a
+      # PR runs on another ref, cannot read the key, and a status it writes does not count.
+      ambiente:
+        description: Environment com o secret PORTAO_APP_KEY ('' = sem App)
+        type: string
+        default: ''
+      app-client-id:
+        description: Client ID do GitHub App que grava o status «portao» ('' = token do job)
+        type: string
+        default: ''
       ci-ref:
         description: Ref do nadairafael/ci de onde vem o dist/portao.mjs
         type: string
         default: v1
+    secrets:
+      PORTAO_APP_KEY:
+        description: Chave privada do GitHub App do portão (guardada no environment)
+        required: false
 
 jobs:
   portao:
     # An `edited` event only matters when it changed the base branch; a title or body edit is skipped.
     if: github.event.action != 'edited' || github.event.changes.base.ref.from
+    # An empty name means no environment. deployment: false reads its secrets without a deployment.
+    environment:
+      name: ${{ inputs.ambiente }}
+      deployment: false
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -38,8 +62,22 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.22.3
+      # A failed mint does not stop the job: the gate then fails with the reason on the PR.
+      - name: Token do App
+        id: app
+        if: inputs.app-client-id != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ inputs.app-client-id }}
+          private-key: ${{ secrets.PORTAO_APP_KEY }}
+          permission-statuses: write
       - name: Portão
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          STATUS_TOKEN: ${{ steps.app.outputs.token }}
+          APP_PEDIDO: ${{ inputs.app-client-id != '' }}
+          AMBIENTE: ${{ inputs.ambiente }}
           PR_NUMERO: ${{ inputs.pr }}
+          PR_SHA: ${{ inputs.sha }}
         run: node .portao-ci/dist/portao.mjs

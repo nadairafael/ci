@@ -27096,13 +27096,13 @@ var githubLive = (acesso) => Layer_exports.effect(
   Effect_exports.gen(function* () {
     const http = yield* HttpClient_exports.HttpClient;
     const marcador = acesso.marcador ?? MARCADOR;
-    const pedir = (metodo, caminho, corpo) => {
+    const pedir = (metodo, caminho, corpo, token = acesso.token) => {
       const base = HttpClientRequest_exports.make(metodo)(`${acesso.api}${caminho}`).pipe(
         HttpClientRequest_exports.setHeaders({
           Accept: "application/vnd.github+json",
           "X-GitHub-Api-Version": "2022-11-28"
         }),
-        HttpClientRequest_exports.bearerToken(acesso.token)
+        HttpClientRequest_exports.bearerToken(token)
       );
       const request3 = corpo === void 0 ? base : HttpClientRequest_exports.bodyJsonUnsafe(base, corpo);
       const falhou = (detalhe, status) => new ErroApi({ mensagem: `${metodo} ${caminho} ${detalhe}`, ...status === void 0 ? {} : { status } });
@@ -27127,7 +27127,7 @@ var githubLive = (acesso) => Layer_exports.effect(
         )
       )
     );
-    const escrever = (metodo, caminho, corpo) => pedir(metodo, caminho, corpo).pipe(
+    const escrever = (metodo, caminho, corpo, token) => pedir(metodo, caminho, corpo, token).pipe(
       Effect_exports.flatMap(Option_exports.match({
         onNone: () => Effect_exports.fail(new ErroApi({ mensagem: `${metodo} ${caminho} respondeu 404` })),
         onSome: () => Effect_exports.void
@@ -27204,7 +27204,7 @@ var githubLive = (acesso) => Layer_exports.effect(
         context: acesso.contexto ?? "portao",
         description: descricao,
         target_url: url
-      })
+      }, acesso.tokenStatus || void 0)
     });
   })
 );
@@ -27273,6 +27273,7 @@ var summary = (r, config) => {
 };
 
 // src/programa.ts
+var shaDoRun = (amb) => amb.prSha ?? amb.sha;
 var Motivo = class extends Data_exports.TaggedError("Motivo") {
 };
 var falhaSemPr = (mensagem) => ({
@@ -27301,9 +27302,15 @@ var programa = (amb) => Effect_exports.gen(function* () {
   const lido = yield* lerPrDoEvento(amb).pipe(Effect_exports.result);
   if (lido._tag === "Failure") {
     const r = falhaSemPr(lido.failure._tag === "Motivo" ? lido.failure.mensagem : `O port\xE3o n\xE3o conseguiu ler o PR: ${lido.failure.mensagem}`);
-    return yield* publicar(amb, r, void 0, void 0, amb.sha);
+    return yield* publicar(amb, r, void 0, void 0, amb.evento === "workflow_dispatch" ? shaDoRun(amb) : amb.sha);
   }
   const pr = lido.success;
+  const obsoleto = amb.evento === "workflow_dispatch" && pr.head.sha !== shaDoRun(amb);
+  const numero = obsoleto ? void 0 : pr.number;
+  const alvo = obsoleto ? shaDoRun(amb) : pr.head.sha;
+  if (amb.appSemToken !== void 0) {
+    return yield* publicar(amb, falhaSemPr(amb.appSemToken), void 0, numero, alvo);
+  }
   const avaliado = yield* Effect_exports.gen(function* () {
     const [config, arquivos] = yield* Effect_exports.all([gh.lerConfig(pr.base.sha), gh.lerArquivos(pr.number)], {
       concurrency: "unbounded"
@@ -27319,7 +27326,7 @@ var programa = (amb) => Effect_exports.gen(function* () {
       autor: pr.user.login,
       headRef: pr.head.ref,
       headSha: pr.head.sha,
-      shaDoRun: amb.evento === "workflow_dispatch" ? amb.sha : void 0,
+      shaDoRun: amb.evento === "workflow_dispatch" ? shaDoRun(amb) : void 0,
       changedFiles: pr.changed_files,
       arquivos
     });
@@ -27332,14 +27339,7 @@ var programa = (amb) => Effect_exports.gen(function* () {
       })
     )
   );
-  const obsoleto = amb.evento === "workflow_dispatch" && pr.head.sha !== amb.sha;
-  return yield* publicar(
-    amb,
-    avaliado.r,
-    avaliado.config,
-    obsoleto ? void 0 : pr.number,
-    obsoleto ? amb.sha : pr.head.sha
-  );
+  return yield* publicar(amb, avaliado.r, avaliado.config, numero, alvo);
 });
 var publicar = (amb, r, config, numero, sha) => Effect_exports.gen(function* () {
   const gh = yield* GitHub;
@@ -27372,7 +27372,8 @@ var lerEvento = () => {
 var layer2 = githubLive({
   api: env.GITHUB_API_URL ?? "https://api.github.com",
   repo: env.GITHUB_REPOSITORY ?? "",
-  token: env.GITHUB_TOKEN ?? ""
+  token: env.GITHUB_TOKEN ?? "",
+  tokenStatus: env.STATUS_TOKEN || void 0
 }).pipe(Layer_exports.provide(FetchHttpClient_exports.layer));
 var { ok } = await Effect_exports.runPromise(
   programa({
@@ -27382,6 +27383,8 @@ var { ok } = await Effect_exports.runPromise(
     dono: env.GITHUB_REPOSITORY_OWNER ?? "",
     runUrl: `${env.GITHUB_SERVER_URL ?? "https://github.com"}/${env.GITHUB_REPOSITORY ?? ""}/actions/runs/${env.GITHUB_RUN_ID ?? ""}`,
     prNumero: env.PR_NUMERO || void 0,
+    prSha: env.PR_SHA || void 0,
+    appSemToken: env.APP_PEDIDO === "true" && !env.STATUS_TOKEN ? `O caller pediu o App do port\xE3o (app-client-id), mas o token dele n\xE3o saiu: confira se o secret PORTAO_APP_KEY est\xE1 no environment \xAB${env.AMBIENTE ?? ""}\xBB e se o App est\xE1 instalado neste repo.` : void 0,
     log: (linha) => console.log(linha),
     anexarSummary: (texto) => {
       if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, texto);

@@ -44,6 +44,7 @@ const montar = (f: Falso = {}) => {
     dono: "nadairafael",
     runUrl: "https://run",
     prNumero: undefined,
+    prSha: undefined,
     log: (s) => void log.push(s),
     anexarSummary: () => {},
     ...over,
@@ -131,5 +132,45 @@ it.effect("um motivo com várias linhas sai numa anotação só, com as quebras 
     expect(erros).toEqual([
       '::error title=Portão::.github/portao.json inválido: Expected number%0A  at ["tamanho"]["limite"]',
     ])
+  }).pipe(Effect.provide(m.layer))
+})
+
+it.effect("dispatch no branch padrão com o sha do head: avalia o head e grava nele", () => {
+  const m = montar()
+  return Effect.gen(function* () {
+    const r = yield* programa(m.amb({ evento: "workflow_dispatch", payload: {}, prNumero: "7", sha: "mainsha", prSha: "headsha" }))
+    expect(r.ok).toBe(true)
+    expect(m.status.map((s) => [s.sha, s.estado])).toEqual([["headsha", "success"]])
+    expect(m.comentarios.length).toBe(1)
+  }).pipe(Effect.provide(m.layer))
+})
+
+it.effect("dispatch com o sha de um head antigo: falha no sha pedido, nunca no commit do branch padrão", () => {
+  const m = montar()
+  return Effect.gen(function* () {
+    const r = yield* programa(m.amb({ evento: "workflow_dispatch", payload: {}, prNumero: "7", sha: "mainsha", prSha: "velho" }))
+    expect(r.ok).toBe(false)
+    expect(m.status.map((s) => [s.sha, s.estado])).toEqual([["velho", "failure"]])
+    expect(m.comentarios).toEqual([])
+  }).pipe(Effect.provide(m.layer))
+})
+
+it.effect("App pedido sem token: reprova no head dizendo o que conferir", () => {
+  const m = montar()
+  return Effect.gen(function* () {
+    const r = yield* programa(m.amb({ appSemToken: "O caller pediu o App do portão, mas o token dele não saiu." }))
+    expect(r.ok).toBe(false)
+    expect(m.status).toEqual([{ sha: "headsha", estado: "failure", descricao: "O caller pediu o App do portão, mas o token dele não saiu." }])
+    expect(m.comentarios[0]).toContain("- O caller pediu o App do portão, mas o token dele não saiu.")
+  }).pipe(Effect.provide(m.layer))
+})
+
+it.effect("App sem token num disparo de head antigo: falha no sha pedido e não comenta", () => {
+  const m = montar()
+  return Effect.gen(function* () {
+    const r = yield* programa(m.amb({ evento: "workflow_dispatch", payload: {}, prNumero: "7", prSha: "velho", appSemToken: "sem token" }))
+    expect(r.ok).toBe(false)
+    expect(m.status.map((s) => [s.sha, s.estado])).toEqual([["velho", "failure"]])
+    expect(m.comentarios).toEqual([])
   }).pipe(Effect.provide(m.layer))
 })

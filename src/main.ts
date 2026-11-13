@@ -18,6 +18,7 @@ const layer = githubLive({
   api: env.GITHUB_API_URL ?? "https://api.github.com",
   repo: env.GITHUB_REPOSITORY ?? "",
   token: env.GITHUB_TOKEN ?? "",
+  tokenStatus: env.STATUS_TOKEN || undefined,
 }).pipe(Layer.provide(FetchHttpClient.layer))
 
 const { ok } = await Effect.runPromise(
@@ -28,6 +29,10 @@ const { ok } = await Effect.runPromise(
     dono: env.GITHUB_REPOSITORY_OWNER ?? "",
     runUrl: `${env.GITHUB_SERVER_URL ?? "https://github.com"}/${env.GITHUB_REPOSITORY ?? ""}/actions/runs/${env.GITHUB_RUN_ID ?? ""}`,
     prNumero: env.PR_NUMERO || undefined,
+    prSha: env.PR_SHA || undefined,
+    appSemToken: env.APP_PEDIDO === "true" && !env.STATUS_TOKEN
+      ? `O caller pediu o App do portão (app-client-id), mas o token dele não saiu: confira se o secret PORTAO_APP_KEY está no environment «${env.AMBIENTE ?? ""}» e se o App está instalado neste repo.`
+      : undefined,
     log: (linha) => console.log(linha),
     anexarSummary: (texto) => {
       if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, texto)
