@@ -1,0 +1,65 @@
+# Reusable CI for a Node repository in ONE job: one queue slot and one install per run, then each
+# script as its own step so the PR shows which one failed. A script missing from package.json is
+# skipped with a warning in the summary, never silently.
+name: CI Node
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: JSON do runs-on
+        type: string
+        default: '["self-hosted","macOS"]'
+      node-version-file:
+        type: string
+        default: .node-version
+      scripts:
+        description: JSON com os scripts do package.json, na ordem
+        type: string
+        default: '["typecheck","lint","test"]'
+      timeout:
+        type: number
+        default: 20
+      env:
+        description: JSON de variáveis de ambiente para os scripts
+        type: string
+        default: '{}'
+
+jobs:
+  checks:
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    timeout-minutes: ${{ inputs.timeout }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ${{ inputs.node-version-file }}
+      - name: Variáveis
+        env:
+          VARS: ${{ inputs.env }}
+        run: node -e 'for (const [k, v] of Object.entries(JSON.parse(process.env.VARS))) require("fs").appendFileSync(process.env.GITHUB_ENV, k + "=" + v + "\n")'
+      - run: npm ci
+      - name: Typecheck
+        if: contains(fromJSON(inputs.scripts), 'typecheck')
+        run: |
+          if node -e 'process.exit(require("./package.json").scripts?.typecheck ? 0 : 1)'; then
+            npm run typecheck
+          else
+            echo "⚠️ script «typecheck» não existe, pulado" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Lint
+        if: contains(fromJSON(inputs.scripts), 'lint')
+        run: |
+          if node -e 'process.exit(require("./package.json").scripts?.lint ? 0 : 1)'; then
+            npm run lint
+          else
+            echo "⚠️ script «lint» não existe, pulado" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Test
+        if: contains(fromJSON(inputs.scripts), 'test')
+        run: |
+          if node -e 'process.exit(require("./package.json").scripts?.test ? 0 : 1)'; then
+            npm run test
+          else
+            echo "⚠️ script «test» não existe, pulado" >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -1,0 +1,40 @@
+# Reusable PR gate. Runs dist/portao.mjs from this repository on GitHub's machines, in seconds, with
+# no install. It comments the verdict on the PR and writes the commit status «portao» on the PR's
+# head, which is the context a ruleset requires (the job's own check is named «<caller job> / portao»).
+# The caller grants the permissions: contents read, pull-requests write, issues write, statuses write.
+name: Portão
+
+on:
+  workflow_call:
+    inputs:
+      # A string, not a number: on pull_request the caller has no inputs.pr, and an empty value must
+      # not break the call. Callers pass format('{0}', inputs.pr), which is '' when unset.
+      pr:
+        description: Número do PR (só no workflow_dispatch do caller)
+        type: string
+        default: ''
+        required: false
+      ci-ref:
+        description: Ref do nadairafael/ci de onde vem o dist/portao.mjs
+        type: string
+        default: v1
+
+jobs:
+  portao:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: nadairafael/ci
+          ref: ${{ inputs.ci-ref }}
+          path: .portao-ci
+          sparse-checkout: dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.3
+      - name: Portão
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMERO: ${{ inputs.pr }}
+        run: node .portao-ci/dist/portao.mjs
