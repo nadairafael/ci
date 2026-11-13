@@ -123,7 +123,7 @@ Para exigir a segurança num ruleset, use `bloquear: true` e exija o contexto **
 | `ferramentas` | `'["osv","semgrep","gitleaks"]'` | Quais rodar. Um projeto sem lockfile pode tirar o `osv`. |
 | `bloquear` | `false` | `false`: os achados só avisam. `true`: achado novo reprova (status `failure`, comentário e código de saída diferente de zero). |
 | `escopo` | `''` | `''` decide pelo evento: `diff` num `pull_request`, `completo` nos outros (`schedule`, `workflow_dispatch`, `push`). `diff` ou `completo` força. |
-| `semgrep-config` | `p/default` | Os rulesets do Semgrep (registry ou caminho no repo, ex. `.semgrep/`), separados por espaço. |
+| `semgrep-config` | `p/default` | Os rulesets do Semgrep (registry ou caminho no repo, ex. `.semgrep/`), separados por espaço. Num PR, um caminho do repo vale como está na base. |
 | `ci-ref` | `v1` | A ref deste repo de onde vem o `dist/seguranca.mjs`. |
 | `timeout` | `10` | Minutos do job. |
 
