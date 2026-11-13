@@ -27119,6 +27119,7 @@ var githubLive = (acesso) => Layer_exports.effect(
 // src/glob.ts
 var globParaRegex = (glob) => {
   let re = "";
+  let emChaves = false;
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];
     if (c === "*" && glob[i + 1] === "*") {
@@ -27131,10 +27132,14 @@ var globParaRegex = (glob) => {
       }
     } else if (c === "*") re += "[^/]*";
     else if (c === "?") re += "[^/]";
-    else if (c === "{") re += "(?:";
-    else if (c === "}") re += ")";
-    else if (c === ",") re += "|";
-    else re += c.replace(/[.+^$()|[\]\\]/g, "\\$&");
+    else if (c === "{" && !emChaves && glob.indexOf("}", i + 1) !== -1) {
+      re += "(?:";
+      emChaves = true;
+    } else if (c === "}" && emChaves) {
+      re += ")";
+      emChaves = false;
+    } else if (c === "," && emChaves) re += "|";
+    else re += c.replace(/[.+^$(){}|[\]\\]/g, "\\$&");
   }
   return new RegExp(`^${re}$`);
 };
