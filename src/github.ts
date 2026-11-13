@@ -37,6 +37,9 @@ export interface Acesso {
   readonly api: string
   readonly repo: string
   readonly token: string
+  // The commit status context and the comment marker; the gate's own by default.
+  readonly contexto?: string
+  readonly marcador?: string
 }
 
 export class GitHub extends Context.Service<GitHub, {
@@ -44,7 +47,8 @@ export class GitHub extends Context.Service<GitHub, {
   readonly lerArquivos: (numero: number) => Effect.Effect<ReadonlyArray<Arquivo>, ErroApi>
   readonly lerConfig: (baseSha: string) => Effect.Effect<Option.Option<Config>, ErroApi | ConfigInvalida>
   readonly labelAplicadaPor: (numero: number, label: string) => Effect.Effect<Option.Option<string>, ErroApi>
-  readonly gravarComentario: (numero: number, corpo: string) => Effect.Effect<void, ErroApi>
+  // Edits the comment with the marker, or creates one. With `soEditar`, never creates.
+  readonly gravarComentario: (numero: number, corpo: string, soEditar?: boolean) => Effect.Effect<void, ErroApi>
   readonly gravarStatus: (
     sha: string,
     estado: "success" | "failure",
@@ -58,6 +62,7 @@ export const githubLive = (acesso: Acesso): Layer.Layer<GitHub, never, HttpClien
     GitHub,
     Effect.gen(function* () {
       const http = yield* HttpClient.HttpClient
+      const marcador = acesso.marcador ?? MARCADOR
 
       // One API call. 404 is returned as None when `aceita404`; any other non-2xx is an ErroApi.
       const pedir = (metodo: "GET" | "POST" | "PATCH", caminho: string, corpo?: unknown) => {
@@ -182,12 +187,14 @@ export const githubLive = (acesso: Acesso): Layer.Layer<GitHub, never, HttpClien
             }),
           ),
 
-        gravarComentario: (numero, corpo) =>
+        gravarComentario: (numero, corpo, soEditar = false) =>
           paginado(Comentario, `/repos/${acesso.repo}/issues/${numero}/comments`).pipe(
             Effect.flatMap((comentarios) => {
-              const meu = comentarios.find((c) => c.body?.includes(MARCADOR))
+              const meu = comentarios.find((c) => c.body?.includes(marcador))
               return meu
                 ? escrever("PATCH", `/repos/${acesso.repo}/issues/comments/${meu.id}`, { body: corpo })
+                : soEditar
+                ? Effect.void
                 : escrever("POST", `/repos/${acesso.repo}/issues/${numero}/comments`, { body: corpo })
             }),
           ),
@@ -195,7 +202,7 @@ export const githubLive = (acesso: Acesso): Layer.Layer<GitHub, never, HttpClien
         gravarStatus: (sha, estado, descricao, url) =>
           escrever("POST", `/repos/${acesso.repo}/statuses/${sha}`, {
             state: estado,
-            context: "portao",
+            context: acesso.contexto ?? "portao",
             description: descricao,
             target_url: url,
           }),

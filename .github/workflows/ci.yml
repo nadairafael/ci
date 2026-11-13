@@ -44,3 +44,14 @@ jobs:
           advanced-security: false
           annotations: true
           version: 1.32.0
+
+  # End-to-end test of seguranca.yml on this repo's own PRs and pushes, warn-only. It runs the bundle
+  # from the commit under test (ci-ref), not from the v1 tag. `./` and not the self-repository `$/`:
+  # actionlint, one of this repo's checks, does not accept `$/` yet.
+  seguranca:
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/seguranca.yml # zizmor: ignore[self-repository]
+    with:
+      ci-ref: ${{ github.event.pull_request.head.sha || github.sha }}

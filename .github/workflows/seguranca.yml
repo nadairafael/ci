@@ -1,0 +1,234 @@
+# Reusable security check: OSV-Scanner (vulnerable dependencies), Semgrep CE (insecure code) and
+# gitleaks (secrets in the PR's commits), on GitHub's machines. On a PR it reports only what the diff
+# introduced, writes the commit status «seguranca» on the PR head and, by default, only warns:
+# `bloquear: true` makes a new finding fail. Semgrep, the slow step, does not run on draft PRs.
+# Suppression files are read from the base branch, so a PR cannot silence its own findings.
+# The caller grants: contents read, statuses write (and pull-requests write with `bloquear: true`).
+#
+# Tools are pinned by exact version, and the binaries by the SHA-256 written below. They are bumped
+# by hand in this repo: Dependabot does not see versions inside `run:`.
+name: Segurança
+
+on:
+  workflow_call:
+    inputs:
+      ferramentas:
+        description: JSON com as ferramentas a rodar (osv, semgrep, gitleaks)
+        type: string
+        default: '["osv","semgrep","gitleaks"]'
+      bloquear:
+        description: true para um achado novo reprovar; false só avisa
+        type: boolean
+        default: false
+      escopo:
+        description: "'' decide pelo evento (diff num PR, completo nos outros); diff ou completo força"
+        type: string
+        default: ''
+      semgrep-config:
+        description: Rulesets do Semgrep, separados por espaço
+        type: string
+        default: p/default
+      ci-ref:
+        description: Ref do nadairafael/ci de onde vem o dist/seguranca.mjs
+        type: string
+        default: v1
+      timeout:
+        description: Minutos do job
+        type: number
+        default: 10
+
+jobs:
+  seguranca:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout }}
+    env:
+      OSV_VERSAO: 2.7.0
+      OSV_SHA256: 160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b
+      GITLEAKS_VERSAO: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+      SEMGREP_VERSAO: 1.184.0
+    steps:
+      - name: Escopo e ferramentas
+        id: escopo
+        env:
+          ESCOPO: ${{ inputs.escopo }}
+          FERRAMENTAS: ${{ inputs.ferramentas }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMERO: ${{ github.event.pull_request.number }}
+          RASCUNHO: ${{ github.event.pull_request.draft == true }}
+        run: |
+          set -euo pipefail
+          case "$ESCOPO" in
+            '') if [ -n "$HEAD_SHA" ]; then escopo="diff"; else escopo="completo"; fi ;;
+            diff|completo) escopo="$ESCOPO" ;;
+            *) echo "::error title=Segurança::escopo inválido: «$ESCOPO». Use diff, completo ou vazio."; exit 1 ;;
+          esac
+          if [ "$escopo" = diff ] && [ -z "$HEAD_SHA" ]; then
+            echo "::error title=Segurança::o escopo diff precisa de um pull_request; este evento não tem."
+            exit 1
+          fi
+          if ! jq -e 'type == "array" and all(.[]; IN("osv", "semgrep", "gitleaks"))' <<<"$FERRAMENTAS" >/dev/null 2>&1; then
+            echo "::error title=Segurança::ferramentas inválido: «$FERRAMENTAS». Use um JSON como [\"osv\",\"semgrep\",\"gitleaks\"]."
+            exit 1
+          fi
+          for f in osv semgrep gitleaks; do
+            if jq -e --arg f "$f" 'index($f) != null' <<<"$FERRAMENTAS" >/dev/null; then e=sim; else e=nao; fi
+            # Cost control: Semgrep is the slow step, and a draft is not ready for review yet.
+            if [ "$f" = semgrep ] && [ "$e" = sim ] && [ "$RASCUNHO" = true ]; then e=rascunho; fi
+            echo "$f=$e" >> "$GITHUB_OUTPUT"
+          done
+          {
+            echo "escopo=$escopo"
+            if [ "$escopo" = diff ]; then
+              echo "base=$BASE_SHA"
+              echo "head=$HEAD_SHA"
+              echo "pr=$PR_NUMERO"
+            fi
+          } >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/seguranca/supressao"
+
+      # The project's code, with history: gitleaks reads commits and Semgrep diffs against the base.
+      # On a PR it is the head itself, not the merge commit, so a change on the base is not "new".
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: projeto
+          ref: ${{ steps.escopo.outputs.head }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: nadairafael/ci
+          ref: ${{ inputs.ci-ref }}
+          path: .seguranca-ci
+          sparse-checkout: dist
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.3
+
+      # Diff mode: the merge base, the changed files, and the suppression files as they are on the
+      # base branch. Semgrep reads .semgrepignore from the tree and refuses a dirty tree with
+      # --baseline-commit, so the base's .semgrepignore files go into a local commit on top of the head.
+      - name: Preparar o diff
+        if: steps.escopo.outputs.escopo == 'diff'
+        id: diff
+        working-directory: projeto
+        env:
+          BASE: ${{ steps.escopo.outputs.base }}
+          HEAD: ${{ steps.escopo.outputs.head }}
+        run: |
+          set -euo pipefail
+          sup="$RUNNER_TEMP/seguranca/supressao"
+          mb="$(git merge-base "$BASE" "$HEAD")"
+          echo "merge-base=$mb" >> "$GITHUB_OUTPUT"
+          git diff --name-only "$mb" "$HEAD" > "$RUNNER_TEMP/seguranca/alterados.txt"
+          for f in osv-scanner.toml .gitleaks.toml .gitleaksignore; do
+            if git cat-file -e "$BASE:$f" 2>/dev/null; then git show "$BASE:$f" > "$sup/$f"; fi
+          done
+          [ -f "$sup/osv-scanner.toml" ] || : > "$sup/osv-scanner.toml"
+          [ -f "$sup/.gitleaksignore" ] || : > "$sup/.gitleaksignore"
+          [ -f "$sup/.gitleaks.toml" ] || printf '[extend]\nuseDefault = true\n' > "$sup/.gitleaks.toml"
+          mapfile -t ignores < <({ git ls-files; git ls-tree -r --name-only "$BASE"; } | grep -E '(^|/)\.semgrepignore$' | sort -u || true)
+          for f in "${ignores[@]}"; do
+            if git cat-file -e "$BASE:$f" 2>/dev/null; then git checkout -q "$BASE" -- "$f"; else git rm -q -- "$f"; fi
+          done
+          if ! git diff --cached --quiet; then
+            git -c user.name=seguranca -c user.email=seguranca@localhost commit -q --no-verify -m "seguranca: .semgrepignore do base"
+          fi
+
+      - name: Instalar OSV-Scanner
+        if: steps.escopo.outputs.osv == 'sim'
+        run: |
+          set -euo pipefail
+          curl -sSfL --retry 3 -o "$RUNNER_TEMP/osv-scanner" \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSAO}/osv-scanner_linux_amd64"
+          echo "$OSV_SHA256  $RUNNER_TEMP/osv-scanner" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/osv-scanner"
+      - name: Instalar gitleaks
+        if: steps.escopo.outputs.gitleaks == 'sim'
+        run: |
+          set -euo pipefail
+          curl -sSfL --retry 3 -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSAO}/gitleaks_${GITLEAKS_VERSAO}_linux_x64.tar.gz"
+          echo "$GITLEAKS_SHA256  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+      - name: Instalar Semgrep
+        if: steps.escopo.outputs.semgrep == 'sim'
+        run: pipx install --quiet "semgrep==${SEMGREP_VERSAO}"
+
+      # Each tool step records its exit code and report; the last step decides what they mean.
+      - name: OSV-Scanner
+        if: steps.escopo.outputs.osv == 'sim'
+        working-directory: projeto
+        env:
+          ESCOPO: ${{ steps.escopo.outputs.escopo }}
+          MERGE_BASE: ${{ steps.diff.outputs.merge-base }}
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/seguranca"
+          cfg=()
+          if [ "$ESCOPO" = diff ]; then cfg=(--config "$out/supressao/osv-scanner.toml"); fi
+          "$RUNNER_TEMP/osv-scanner" scan source -r --allow-no-lockfiles --format json \
+            --output-file "$out/osv-head.json" "${cfg[@]}" .
+          echo $? > "$out/osv-head.exit"
+          if [ "$ESCOPO" = diff ]; then
+            git worktree add -q --detach "$RUNNER_TEMP/base" "$MERGE_BASE"
+            (cd "$RUNNER_TEMP/base" && "$RUNNER_TEMP/osv-scanner" scan source -r --allow-no-lockfiles --format json \
+              --output-file "$out/osv-base.json" "${cfg[@]}" .)
+            echo $? > "$out/osv-base.exit"
+          fi
+          exit 0
+
+      - name: gitleaks
+        if: steps.escopo.outputs.gitleaks == 'sim'
+        working-directory: projeto
+        env:
+          ESCOPO: ${{ steps.escopo.outputs.escopo }}
+          BASE: ${{ steps.escopo.outputs.base }}
+          HEAD: ${{ steps.escopo.outputs.head }}
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/seguranca"
+          args=()
+          if [ "$ESCOPO" = diff ]; then
+            args=(--log-opts="$BASE..$HEAD" --config "$out/supressao/.gitleaks.toml" --gitleaks-ignore-path "$out/supressao/.gitleaksignore")
+          fi
+          "$RUNNER_TEMP/gitleaks" git --redact --no-banner --exit-code 0 \
+            --report-format json --report-path "$out/gitleaks.json" "${args[@]}" .
+          echo $? > "$out/gitleaks.exit"
+          exit 0
+
+      - name: Semgrep
+        if: steps.escopo.outputs.semgrep == 'sim'
+        working-directory: projeto
+        env:
+          ESCOPO: ${{ steps.escopo.outputs.escopo }}
+          MERGE_BASE: ${{ steps.diff.outputs.merge-base }}
+          CONFIGS: ${{ inputs.semgrep-config }}
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/seguranca"
+          args=()
+          read -ra cs <<<"$CONFIGS"
+          for c in "${cs[@]}"; do args+=(--config "$c"); done
+          if [ "$ESCOPO" = diff ]; then args+=(--baseline-commit "$MERGE_BASE"); fi
+          semgrep scan --metrics=off --disable-version-check --json --output "$out/semgrep.json" "${args[@]}"
+          echo $? > "$out/semgrep.exit"
+          exit 0
+
+      - name: Resultado
+        if: ${{ !cancelled() && steps.escopo.outcome == 'success' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ESCOPO: ${{ steps.escopo.outputs.escopo }}
+          BLOQUEAR: ${{ inputs.bloquear }}
+          OSV: ${{ steps.escopo.outputs.osv }}
+          SEMGREP: ${{ steps.escopo.outputs.semgrep }}
+          GITLEAKS: ${{ steps.escopo.outputs.gitleaks }}
+          HEAD_SHA: ${{ steps.escopo.outputs.head }}
+          PR_NUMERO: ${{ steps.escopo.outputs.pr }}
+          RAIZ_HEAD: ${{ github.workspace }}/projeto
+        run: |
+          export SAIDA="$RUNNER_TEMP/seguranca" RAIZ_BASE="$RUNNER_TEMP/base"
+          node .seguranca-ci/dist/seguranca.mjs
