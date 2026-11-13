@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { sensiveis, situacaoGitleaks, situacaoOsv, situacaoSemgrep } from "../src/seguranca/achados.js"
+import { sensiveis, situacaoGitleaks, situacaoOsv, situacaoSemgrep, supressoesNaLinha } from "../src/seguranca/achados.js"
 
 // Shapes taken from real runs of osv-scanner 2.7.0, semgrep 1.184.0 and gitleaks 8.30.1.
 const osv = (raiz: string, pacotes: Array<{ nome: string; versao: string; ids: string[]; aliases?: string[] }>) =>
@@ -172,6 +172,15 @@ describe("sensiveis", () => {
       ".gitleaksignore",
       ".gitleaks.toml",
       ".github/workflows/seguranca.yml",
+    ])
+  })
+})
+
+describe("supressoesNaLinha", () => {
+  it("lê arquivo, linha e marcador e ignora linhas quebradas", () => {
+    expect(supressoesNaLinha("a.js\t4\tnosemgrep\n\nb.py\tx\tnosem\nc.txt\t0\tgitleaks:allow\nd.go\t9\tgitleaks:allow")).toEqual([
+      { arquivo: "a.js", linha: 4, marcador: "nosemgrep" },
+      { arquivo: "d.go", linha: 9, marcador: "gitleaks:allow" },
     ])
   })
 })

@@ -6,7 +6,8 @@ import { type Config, ConfigInvalida, decodeConfig } from "./config.js"
 // Hidden marker that identifies the gate's own comment, so it is edited and never duplicated.
 export const MARCADOR = "<!-- portao:nadairafael/ci -->"
 
-export class ErroApi extends Data.TaggedError("ErroApi")<{ readonly mensagem: string }> {}
+// `status` is the HTTP status when the API answered with an error.
+export class ErroApi extends Data.TaggedError("ErroApi")<{ readonly mensagem: string; readonly status?: number }> {}
 
 export const PrDaApi = Schema.Struct({
   number: Schema.Number,
@@ -74,14 +75,15 @@ export const githubLive = (acesso: Acesso): Layer.Layer<GitHub, never, HttpClien
           HttpClientRequest.bearerToken(acesso.token),
         )
         const request = corpo === undefined ? base : HttpClientRequest.bodyJsonUnsafe(base, corpo)
-        const falhou = (detalhe: string) => new ErroApi({ mensagem: `${metodo} ${caminho} ${detalhe}` })
+        const falhou = (detalhe: string, status?: number) =>
+          new ErroApi({ mensagem: `${metodo} ${caminho} ${detalhe}`, ...(status === undefined ? {} : { status }) })
         return http.execute(request).pipe(
           Effect.mapError((e) => falhou(`falhou: ${e.message}`)),
           Effect.flatMap((resposta) =>
             resposta.status === 404
               ? Effect.succeed(Option.none<unknown>())
               : resposta.status < 200 || resposta.status >= 300
-              ? Effect.fail(falhou(`respondeu ${resposta.status}`))
+              ? Effect.fail(falhou(`respondeu ${resposta.status}`, resposta.status))
               : resposta.status === 204
               ? Effect.succeed(Option.some<unknown>(null))
               : resposta.json.pipe(

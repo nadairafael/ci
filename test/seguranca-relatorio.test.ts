@@ -35,6 +35,7 @@ const res = (over: Partial<Resultado> = {}): Resultado => ({
   bloquear: false,
   situacoes: { osv: rodou(), semgrep: rodou(), gitleaks: rodou() },
   sensiveis: [],
+  naLinha: [],
   ...over,
 })
 

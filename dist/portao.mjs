@@ -27105,11 +27105,11 @@ var githubLive = (acesso) => Layer_exports.effect(
         HttpClientRequest_exports.bearerToken(acesso.token)
       );
       const request3 = corpo === void 0 ? base : HttpClientRequest_exports.bodyJsonUnsafe(base, corpo);
-      const falhou = (detalhe) => new ErroApi({ mensagem: `${metodo} ${caminho} ${detalhe}` });
+      const falhou = (detalhe, status) => new ErroApi({ mensagem: `${metodo} ${caminho} ${detalhe}`, ...status === void 0 ? {} : { status } });
       return http.execute(request3).pipe(
         Effect_exports.mapError((e) => falhou(`falhou: ${e.message}`)),
         Effect_exports.flatMap(
-          (resposta) => resposta.status === 404 ? Effect_exports.succeed(Option_exports.none()) : resposta.status < 200 || resposta.status >= 300 ? Effect_exports.fail(falhou(`respondeu ${resposta.status}`)) : resposta.status === 204 ? Effect_exports.succeed(Option_exports.some(null)) : resposta.json.pipe(
+          (resposta) => resposta.status === 404 ? Effect_exports.succeed(Option_exports.none()) : resposta.status < 200 || resposta.status >= 300 ? Effect_exports.fail(falhou(`respondeu ${resposta.status}`, resposta.status)) : resposta.status === 204 ? Effect_exports.succeed(Option_exports.some(null)) : resposta.json.pipe(
             Effect_exports.map((j) => Option_exports.some(j)),
             Effect_exports.mapError(() => falhou("devolveu um corpo que n\xE3o \xE9 JSON"))
           )

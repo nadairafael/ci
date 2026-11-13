@@ -7,7 +7,7 @@ const SEMGREP_UM = JSON.stringify({
   results: [{ check_id: "r1", path: "a.js", start: { line: 4 }, extra: { message: "m", severity: "ERROR" } }],
 })
 
-const montar = (arquivos: Record<string, string>, f: { statusFalha?: boolean } = {}) => {
+const montar = (arquivos: Record<string, string>, f: { statusFalha?: boolean; statusHttp?: number } = {}) => {
   const status: Array<{ sha: string; estado: string; descricao: string }> = []
   const comentarios: Array<{ corpo: string; soEditar: boolean | undefined }> = []
   const nao = () => Effect.die("não usado")
@@ -19,7 +19,7 @@ const montar = (arquivos: Record<string, string>, f: { statusFalha?: boolean } =
     gravarComentario: (_n, corpo, soEditar) => Effect.sync(() => void comentarios.push({ corpo, soEditar })),
     gravarStatus: (sha, estado, descricao) =>
       f.statusFalha
-        ? Effect.fail(new ErroApi({ mensagem: "POST /statuses respondeu 403" }))
+        ? Effect.fail(new ErroApi({ mensagem: `POST /statuses respondeu ${f.statusHttp ?? 500}`, status: f.statusHttp ?? 500 }))
         : Effect.sync(() => void status.push({ sha, estado, descricao })),
   }))
   const log: Array<string> = []
@@ -30,6 +30,7 @@ const montar = (arquivos: Record<string, string>, f: { statusFalha?: boolean } =
     estados: { osv: "nao", semgrep: "sim", gitleaks: "sim" },
     headSha: "headsha",
     prNumero: 7,
+    fork: false,
     raizes: { head: "/h", base: "/b" },
     runUrl: "https://run",
     ler: (nome) => arquivos[nome],
@@ -111,6 +112,40 @@ it.effect("falha ao gravar o status vira warning e não muda o veredito", () => 
   return Effect.gen(function* () {
     const r = yield* programa(m.amb())
     expect(r.ok).toBe(true)
+    expect(m.log).toContain("::warning title=Segurança::não consegui gravar o status «seguranca»: POST /statuses respondeu 500")
+  }).pipe(Effect.provide(m.layer))
+})
+
+it.effect("403 no status fora de fork: falta statuses: write, o job falha mesmo só avisando", () => {
+  const m = montar(LIMPO, { statusFalha: true, statusHttp: 403 })
+  return Effect.gen(function* () {
+    const r = yield* programa(m.amb())
+    expect(r.ok).toBe(false)
+    expect(m.log).toContain(
+      "::error title=Segurança::não consegui gravar o status «seguranca» (403): dê ao job do caller a permissão statuses: write. POST /statuses respondeu 403",
+    )
+  }).pipe(Effect.provide(m.layer))
+})
+
+it.effect("403 no status num fork continua só aviso: o token de fork não escreve", () => {
+  const m = montar(LIMPO, { statusFalha: true, statusHttp: 403 })
+  return Effect.gen(function* () {
+    const r = yield* programa(m.amb({ fork: true }))
+    expect(r.ok).toBe(true)
     expect(m.log).toContain("::warning title=Segurança::não consegui gravar o status «seguranca»: POST /statuses respondeu 403")
+  }).pipe(Effect.provide(m.layer))
+})
+
+it.effect("supressão na linha adicionada pelo PR: aviso no summary e anotação na linha, sem reprovar", () => {
+  const m = montar({ ...LIMPO, "supressoes-na-linha.txt": "src/a.js\t12\tnosemgrep\n.env.exemplo\t3\tgitleaks:allow\n" })
+  return Effect.gen(function* () {
+    const r = yield* programa(m.amb({ bloquear: true }))
+    expect(r.ok).toBe(true)
+    expect(m.summaries[0]).toContain(
+      "⚠️ Este PR adiciona supressão na linha (`src/a.js:12` nosemgrep, `.env.exemplo:3` gitleaks:allow): precisa de olho humano. Ela já vale neste PR.",
+    )
+    expect(m.log).toContain(
+      "::warning file=src/a.js,line=12,title=Segurança%3A supressão na linha::Este PR adiciona «nosemgrep» nesta linha: confira se a supressão é justa.",
+    )
   }).pipe(Effect.provide(m.layer))
 })

@@ -231,3 +231,20 @@ const SUPRESSAO = new Set(["osv-scanner.toml", ".semgrepignore", ".gitleaksignor
 
 export const sensiveis = (alterados: ReadonlyArray<string>): ReadonlyArray<string> =>
   alterados.filter((a) => SUPRESSAO.has(a.split("/").at(-1) ?? "") || a === ".github/workflows/seguranca.yml")
+
+// ---------- Inline suppressions added by the PR ----------
+
+// A line the PR added with `nosemgrep` / `nosem` or `gitleaks:allow`. It silences a finding in this
+// same PR, so it gets the human-eye warning.
+export interface NaLinha {
+  readonly arquivo: string
+  readonly linha: number
+  readonly marcador: string
+}
+
+// Reads the "path<TAB>line<TAB>marker" lines the workflow's diff step writes.
+export const supressoesNaLinha = (texto: string): ReadonlyArray<NaLinha> =>
+  texto.split("\n").flatMap((l) => {
+    const [arquivo, linha, marcador] = l.split("\t")
+    return arquivo && marcador && /^[1-9]\d*$/.test(linha ?? "") ? [{ arquivo, linha: Number(linha), marcador }] : []
+  })

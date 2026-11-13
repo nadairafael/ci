@@ -125,13 +125,34 @@ jobs:
           mb="$(git merge-base "$BASE" "$HEAD")"
           echo "merge-base=$mb" >> "$GITHUB_OUTPUT"
           git diff --name-only "$mb" "$HEAD" > "$RUNNER_TEMP/seguranca/alterados.txt"
-          for f in osv-scanner.toml .gitleaks.toml .gitleaksignore; do
+          # Lines the PR added with an inline suppression: "path<TAB>line<TAB>marker", for the warning.
+          # Inside a hunk, `old`/`new` count the lines left, so an added line that starts with "++ " is
+          # never taken for the "+++ " header.
+          git diff -U0 --no-color --no-ext-diff "$mb" "$HEAD" | awk '
+            old > 0 || new > 0 {
+              if (/^-/) { old--; next }
+              if (/^\+/) {
+                l = tolower($0)
+                if (f != "" && (l ~ /nosem(grep)?[^a-z0-9_-]/ || l ~ /nosem(grep)?$/)) print f "\t" n "\tnosemgrep"
+                else if (f != "" && l ~ /gitleaks:allow/) print f "\t" n "\tgitleaks:allow"
+                n++; new--
+              }
+              next
+            }
+            /^\+\+\+ / { f = (substr($0, 5) == "/dev/null") ? "" : substr($0, 7); next }
+            /^@@ / {
+              split(substr($2, 2), o, ","); split(substr($3, 2), a, ",")
+              old = (o[2] == "") ? 1 : o[2] + 0; new = (a[2] == "") ? 1 : a[2] + 0; n = a[1] + 0
+            }
+          ' > "$RUNNER_TEMP/seguranca/supressoes-na-linha.txt"
+          for f in .gitleaks.toml .gitleaksignore; do
             if git cat-file -e "$BASE:$f" 2>/dev/null; then git show "$BASE:$f" > "$sup/$f"; fi
           done
-          [ -f "$sup/osv-scanner.toml" ] || : > "$sup/osv-scanner.toml"
           [ -f "$sup/.gitleaksignore" ] || : > "$sup/.gitleaksignore"
           [ -f "$sup/.gitleaks.toml" ] || printf '[extend]\nuseDefault = true\n' > "$sup/.gitleaks.toml"
-          mapfile -t ignores < <({ git ls-files; git ls-tree -r --name-only "$BASE"; } | grep -E '(^|/)\.semgrepignore$' | sort -u || true)
+          # .semgrepignore and osv-scanner.toml, in any folder, as they are on the base. OSV reads each
+          # osv-scanner.toml next to its lockfile, and the OSV step does the same on the merge-base tree.
+          mapfile -t ignores < <({ git ls-files; git ls-tree -r --name-only "$BASE"; } | grep -E '(^|/)(\.semgrepignore|osv-scanner\.toml)$' | sort -u || true)
           for f in "${ignores[@]}"; do
             if git cat-file -e "$BASE:$f" 2>/dev/null; then git checkout -q "$BASE" -- "$f"; else git rm -q -- "$f"; fi
           done
@@ -187,19 +208,23 @@ jobs:
         working-directory: projeto
         env:
           ESCOPO: ${{ steps.escopo.outputs.escopo }}
+          BASE: ${{ steps.escopo.outputs.base }}
           MERGE_BASE: ${{ steps.diff.outputs.merge-base }}
         run: |
           set +e -uo pipefail
           out="$RUNNER_TEMP/seguranca"
-          cfg=()
-          if [ "$ESCOPO" = diff ]; then cfg=(--config "$out/supressao/osv-scanner.toml"); fi
           "$RUNNER_TEMP/osv-scanner" scan source -r --allow-no-lockfiles --format json \
-            --output-file "$out/osv-head.json" "${cfg[@]}" .
+            --output-file "$out/osv-head.json" .
           echo $? > "$out/osv-head.exit"
           if [ "$ESCOPO" = diff ]; then
             git worktree add -q --detach "$RUNNER_TEMP/base" "$MERGE_BASE"
+            # The merge-base tree gets the base's osv-scanner.toml files too, so both scans use the same ones.
+            git ls-tree -r --name-only "$MERGE_BASE" | grep -E '(^|/)osv-scanner\.toml$' | while read -r f; do rm -f "$RUNNER_TEMP/base/$f"; done
+            git ls-tree -r --name-only "$BASE" | grep -E '(^|/)osv-scanner\.toml$' | while read -r f; do
+              mkdir -p "$(dirname "$RUNNER_TEMP/base/$f")" && git show "$BASE:$f" > "$RUNNER_TEMP/base/$f"
+            done
             (cd "$RUNNER_TEMP/base" && "$RUNNER_TEMP/osv-scanner" scan source -r --allow-no-lockfiles --format json \
-              --output-file "$out/osv-base.json" "${cfg[@]}" .)
+              --output-file "$out/osv-base.json" .)
             echo $? > "$out/osv-base.exit"
           fi
           exit 0
@@ -252,6 +277,7 @@ jobs:
           GITLEAKS: ${{ steps.escopo.outputs.gitleaks }}
           HEAD_SHA: ${{ steps.escopo.outputs.head }}
           PR_NUMERO: ${{ steps.escopo.outputs.pr }}
+          FORK: ${{ github.event.pull_request.head.repo.fork }}
           RAIZ_HEAD: ${{ github.workspace }}/projeto
         run: |
           export SAIDA="$RUNNER_TEMP/seguranca" RAIZ_BASE="$RUNNER_TEMP/base"

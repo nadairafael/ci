@@ -1,7 +1,7 @@
 // Pure: the copy the security workflow writes (summary, annotations, status, comment). pt-BR, and
 // pinned by the tests: it is part of the contract.
 import { escaparDado, escaparPropriedade } from "../comando.js"
-import { type Achado, type Ferramenta, FERRAMENTAS, type Situacao } from "./achados.js"
+import { type Achado, type Ferramenta, FERRAMENTAS, type NaLinha, type Situacao } from "./achados.js"
 
 // Hidden marker of the security comment, distinct from the gate's.
 export const MARCADOR_SEGURANCA = "<!-- seguranca:nadairafael/ci -->"
@@ -11,6 +11,7 @@ export interface Resultado {
   readonly bloquear: boolean
   readonly situacoes: Readonly<Record<Ferramenta, Situacao>>
   readonly sensiveis: ReadonlyArray<string>
+  readonly naLinha: ReadonlyArray<NaLinha>
 }
 
 const NOME: Record<Ferramenta, string> = { osv: "OSV-Scanner", semgrep: "Semgrep", gitleaks: "gitleaks" }
@@ -74,6 +75,14 @@ const situacaoTexto = (s: Situacao): string => {
 const AVISO_SENSIVEIS = (arquivos: ReadonlyArray<string>) =>
   `⚠️ Este PR mexe na supressão de achados (${arquivos.join(", ")}): precisa de olho humano. Supressões novas só valem depois do merge.`
 
+const MAX_NA_LINHA = 10
+
+const AVISO_NA_LINHA = (marcas: ReadonlyArray<NaLinha>) => {
+  const lista = marcas.slice(0, MAX_NA_LINHA).map((m) => `\`${m.arquivo}:${m.linha}\` ${m.marcador}`).join(", ")
+  const resto = marcas.length > MAX_NA_LINHA ? ` e mais ${marcas.length - MAX_NA_LINHA}` : ""
+  return `⚠️ Este PR adiciona supressão na linha (${lista}${resto}): precisa de olho humano. Ela já vale neste PR.`
+}
+
 // The step summary: the verdict, one row per tool, then one table per tool with findings.
 export const summary = (r: Resultado): string => {
   const linhas = [
@@ -102,6 +111,7 @@ export const summary = (r: Resultado): string => {
     }
   }
   if (r.sensiveis.length > 0) linhas.push("", AVISO_SENSIVEIS(r.sensiveis))
+  if (r.naLinha.length > 0) linhas.push("", AVISO_NA_LINHA(r.naLinha))
   return linhas.join("\n")
 }
 
@@ -121,7 +131,13 @@ export const anotacoes = (r: Resultado): ReadonlyArray<string> => {
     const s = r.situacoes[f]
     return s._tag === "Erro" ? [`::${nivel} title=Segurança::${escaparDado(`${NOME[f]} não rodou: ${s.motivo}`)}`] : []
   })
-  return [...deAchados, ...deErros]
+  // Always a warning: a suppression is allowed, it only needs a human's eye.
+  const deNaLinha = r.naLinha.map((m) =>
+    `::warning file=${escaparPropriedade(m.arquivo)},line=${m.linha},title=${escaparPropriedade("Segurança: supressão na linha")}::${
+      escaparDado(`Este PR adiciona «${m.marcador}» nesta linha: confira se a supressão é justa.`)
+    }`
+  )
+  return [...deAchados, ...deErros, ...deNaLinha]
 }
 
 const MAX_NO_COMENTARIO = 20
@@ -145,6 +161,7 @@ export const comentario = (r: Resultado, runUrl: string): string => {
     )
   }
   if (r.sensiveis.length > 0) linhas.push(AVISO_SENSIVEIS(r.sensiveis))
+  if (r.naLinha.length > 0) linhas.push(AVISO_NA_LINHA(r.naLinha))
   linhas.push(`[Ver o run](${runUrl})`)
   return linhas.join("\n")
 }

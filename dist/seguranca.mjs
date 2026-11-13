@@ -27001,11 +27001,11 @@ var githubLive = (acesso) => Layer_exports.effect(
         HttpClientRequest_exports.bearerToken(acesso.token)
       );
       const request3 = corpo === void 0 ? base : HttpClientRequest_exports.bodyJsonUnsafe(base, corpo);
-      const falhou = (detalhe) => new ErroApi({ mensagem: `${metodo} ${caminho} ${detalhe}` });
+      const falhou = (detalhe, status) => new ErroApi({ mensagem: `${metodo} ${caminho} ${detalhe}`, ...status === void 0 ? {} : { status } });
       return http.execute(request3).pipe(
         Effect_exports.mapError((e) => falhou(`falhou: ${e.message}`)),
         Effect_exports.flatMap(
-          (resposta) => resposta.status === 404 ? Effect_exports.succeed(Option_exports.none()) : resposta.status < 200 || resposta.status >= 300 ? Effect_exports.fail(falhou(`respondeu ${resposta.status}`)) : resposta.status === 204 ? Effect_exports.succeed(Option_exports.some(null)) : resposta.json.pipe(
+          (resposta) => resposta.status === 404 ? Effect_exports.succeed(Option_exports.none()) : resposta.status < 200 || resposta.status >= 300 ? Effect_exports.fail(falhou(`respondeu ${resposta.status}`, resposta.status)) : resposta.status === 204 ? Effect_exports.succeed(Option_exports.some(null)) : resposta.json.pipe(
             Effect_exports.map((j) => Option_exports.some(j)),
             Effect_exports.mapError(() => falhou("devolveu um corpo que n\xE3o \xE9 JSON"))
           )
@@ -27264,6 +27264,10 @@ var situacaoGitleaks = (saida2) => {
 };
 var SUPRESSAO = /* @__PURE__ */ new Set(["osv-scanner.toml", ".semgrepignore", ".gitleaksignore", ".gitleaks.toml"]);
 var sensiveis = (alterados) => alterados.filter((a) => SUPRESSAO.has(a.split("/").at(-1) ?? "") || a === ".github/workflows/seguranca.yml");
+var supressoesNaLinha = (texto) => texto.split("\n").flatMap((l) => {
+  const [arquivo, linha, marcador] = l.split("	");
+  return arquivo && marcador && /^[1-9]\d*$/.test(linha ?? "") ? [{ arquivo, linha: Number(linha), marcador }] : [];
+});
 
 // src/seguranca/relatorio.ts
 var MARCADOR_SEGURANCA = "<!-- seguranca:nadairafael/ci -->";
@@ -27312,6 +27316,12 @@ var situacaoTexto = (s) => {
   }
 };
 var AVISO_SENSIVEIS = (arquivos) => `\u26A0\uFE0F Este PR mexe na supress\xE3o de achados (${arquivos.join(", ")}): precisa de olho humano. Supress\xF5es novas s\xF3 valem depois do merge.`;
+var MAX_NA_LINHA = 10;
+var AVISO_NA_LINHA = (marcas) => {
+  const lista = marcas.slice(0, MAX_NA_LINHA).map((m) => `\`${m.arquivo}:${m.linha}\` ${m.marcador}`).join(", ");
+  const resto = marcas.length > MAX_NA_LINHA ? ` e mais ${marcas.length - MAX_NA_LINHA}` : "";
+  return `\u26A0\uFE0F Este PR adiciona supress\xE3o na linha (${lista}${resto}): precisa de olho humano. Ela j\xE1 vale neste PR.`;
+};
 var summary = (r) => {
   const linhas = [
     titulo(r),
@@ -27337,6 +27347,7 @@ var summary = (r) => {
     }
   }
   if (r.sensiveis.length > 0) linhas.push("", AVISO_SENSIVEIS(r.sensiveis));
+  if (r.naLinha.length > 0) linhas.push("", AVISO_NA_LINHA(r.naLinha));
   return linhas.join("\n");
 };
 var anotacoes = (r) => {
@@ -27353,7 +27364,10 @@ var anotacoes = (r) => {
     const s = r.situacoes[f];
     return s._tag === "Erro" ? [`::${nivel} title=Seguran\xE7a::${escaparDado(`${NOME[f]} n\xE3o rodou: ${s.motivo}`)}`] : [];
   });
-  return [...deAchados, ...deErros];
+  const deNaLinha = r.naLinha.map(
+    (m) => `::warning file=${escaparPropriedade(m.arquivo)},line=${m.linha},title=${escaparPropriedade("Seguran\xE7a: supress\xE3o na linha")}::${escaparDado(`Este PR adiciona \xAB${m.marcador}\xBB nesta linha: confira se a supress\xE3o \xE9 justa.`)}`
+  );
+  return [...deAchados, ...deErros, ...deNaLinha];
 };
 var MAX_NO_COMENTARIO = 20;
 var comentario = (r, runUrl) => {
@@ -27373,6 +27387,7 @@ var comentario = (r, runUrl) => {
     );
   }
   if (r.sensiveis.length > 0) linhas.push(AVISO_SENSIVEIS(r.sensiveis));
+  if (r.naLinha.length > 0) linhas.push(AVISO_NA_LINHA(r.naLinha));
   linhas.push(`[Ver o run](${runUrl})`);
   return linhas.join("\n");
 };
@@ -27396,7 +27411,8 @@ var resultado = (amb) => ({
   escopo: amb.escopo,
   bloquear: amb.bloquear,
   situacoes: { osv: situacao(amb, "osv"), semgrep: situacao(amb, "semgrep"), gitleaks: situacao(amb, "gitleaks") },
-  sensiveis: amb.escopo === "diff" ? sensiveis((amb.ler("alterados.txt") ?? "").split("\n").map((l) => l.trim()).filter((l) => l !== "")) : []
+  sensiveis: amb.escopo === "diff" ? sensiveis((amb.ler("alterados.txt") ?? "").split("\n").map((l) => l.trim()).filter((l) => l !== "")) : [],
+  naLinha: amb.escopo === "diff" ? supressoesNaLinha(amb.ler("supressoes-na-linha.txt") ?? "") : []
 });
 var programa = (amb) => Effect_exports.gen(function* () {
   const gh = yield* GitHub;
@@ -27408,15 +27424,24 @@ var programa = (amb) => Effect_exports.gen(function* () {
   amb.log(texto);
   amb.anexarSummary(`${texto}
 `);
+  let semPermissao = false;
   if (amb.escopo === "diff" && amb.headSha) {
     yield* gh.gravarStatus(amb.headSha, ok2 ? "success" : "failure", descricaoStatus(r), amb.runUrl).pipe(
-      Effect_exports.catch(avisar("gravar o status \xABseguranca\xBB"))
+      Effect_exports.catch((e) => {
+        if (e.status !== 403 || amb.fork) return avisar("gravar o status \xABseguranca\xBB")(e);
+        semPermissao = true;
+        return Effect_exports.sync(
+          () => amb.log(
+            `::error title=Seguran\xE7a::${escaparDado(`n\xE3o consegui gravar o status \xABseguranca\xBB (403): d\xEA ao job do caller a permiss\xE3o statuses: write. ${e.mensagem}`)}`
+          )
+        );
+      })
     );
   }
   if (amb.bloquear && amb.escopo === "diff" && amb.prNumero !== void 0) {
     yield* gh.gravarComentario(amb.prNumero, comentario(r, amb.runUrl), ok2).pipe(Effect_exports.catch(avisar("comentar no PR")));
   }
-  return { ok: ok2 };
+  return { ok: ok2 && !semPermissao };
 });
 
 // src/seguranca/main.ts
@@ -27436,6 +27461,7 @@ var { ok } = await Effect_exports.runPromise(
     bloquear: env.BLOQUEAR === "true",
     estados: { osv: estado(env.OSV), semgrep: estado(env.SEMGREP), gitleaks: estado(env.GITLEAKS) },
     headSha: env.HEAD_SHA || void 0,
+    fork: env.FORK === "true",
     prNumero: /^[1-9]\d*$/.test(env.PR_NUMERO ?? "") ? Number(env.PR_NUMERO) : void 0,
     raizes: { head: env.RAIZ_HEAD ?? "", base: env.RAIZ_BASE ?? "" },
     runUrl: `${env.GITHUB_SERVER_URL ?? "https://github.com"}/${env.GITHUB_REPOSITORY ?? ""}/actions/runs/${env.GITHUB_RUN_ID ?? ""}`,

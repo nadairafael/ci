@@ -26,6 +26,7 @@ const { ok } = await Effect.runPromise(
     bloquear: env.BLOQUEAR === "true",
     estados: { osv: estado(env.OSV), semgrep: estado(env.SEMGREP), gitleaks: estado(env.GITLEAKS) },
     headSha: env.HEAD_SHA || undefined,
+    fork: env.FORK === "true",
     prNumero: /^[1-9]\d*$/.test(env.PR_NUMERO ?? "") ? Number(env.PR_NUMERO) : undefined,
     raizes: { head: env.RAIZ_HEAD ?? "", base: env.RAIZ_BASE ?? "" },
     runUrl: `${env.GITHUB_SERVER_URL ?? "https://github.com"}/${env.GITHUB_REPOSITORY ?? ""}/actions/runs/${env.GITHUB_RUN_ID ?? ""}`,

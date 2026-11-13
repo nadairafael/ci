@@ -5,6 +5,7 @@ import {
   type Ferramenta,
   sensiveis,
   type Situacao,
+  supressoesNaLinha,
   situacaoGitleaks,
   situacaoOsv,
   situacaoSemgrep,
@@ -22,6 +23,8 @@ export interface Ambiente {
   // The PR's head and number; undefined on a full scan.
   readonly headSha: string | undefined
   readonly prNumero: number | undefined
+  // A PR from a fork: its token is read-only, so a 403 on the status is expected there.
+  readonly fork: boolean
   // Where the head and the base were checked out, to make OSV's absolute paths relative.
   readonly raizes: { readonly head: string; readonly base: string }
   readonly runUrl: string
@@ -53,10 +56,12 @@ export const resultado = (amb: Ambiente): Resultado => ({
   sensiveis: amb.escopo === "diff"
     ? sensiveis((amb.ler("alterados.txt") ?? "").split("\n").map((l) => l.trim()).filter((l) => l !== ""))
     : [],
+  naLinha: amb.escopo === "diff" ? supressoesNaLinha(amb.ler("supressoes-na-linha.txt") ?? "") : [],
 })
 
 // Annotations, summary, the «seguranca» status on the PR head and, with `bloquear`, the comment.
-// A failed write is a warning: the verdict stands.
+// A failed write is a warning: the verdict stands. The exception is a 403 on the status outside a
+// fork: the caller is missing `statuses: write`, and that fails the job even when it only warns.
 export const programa = (amb: Ambiente): Effect.Effect<{ readonly ok: boolean }, never, GitHub> =>
   Effect.gen(function* () {
     const gh = yield* GitHub
@@ -70,13 +75,24 @@ export const programa = (amb: Ambiente): Effect.Effect<{ readonly ok: boolean },
     amb.log(texto)
     amb.anexarSummary(`${texto}\n`)
 
+    let semPermissao = false
     if (amb.escopo === "diff" && amb.headSha) {
       yield* gh.gravarStatus(amb.headSha, ok ? "success" : "failure", descricaoStatus(r), amb.runUrl).pipe(
-        Effect.catch(avisar("gravar o status «seguranca»")),
+        Effect.catch((e) => {
+          if (e.status !== 403 || amb.fork) return avisar("gravar o status «seguranca»")(e)
+          semPermissao = true
+          return Effect.sync(() =>
+            amb.log(
+              `::error title=Segurança::${
+                escaparDado(`não consegui gravar o status «seguranca» (403): dê ao job do caller a permissão statuses: write. ${e.mensagem}`)
+              }`,
+            )
+          )
+        }),
       )
     }
     if (amb.bloquear && amb.escopo === "diff" && amb.prNumero !== undefined) {
       yield* gh.gravarComentario(amb.prNumero, comentario(r, amb.runUrl), ok).pipe(Effect.catch(avisar("comentar no PR")))
     }
-    return { ok }
+    return { ok: ok && !semPermissao }
   })
