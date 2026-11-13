@@ -18,6 +18,20 @@ describe("glob", () => {
     expect(globParaRegex("**/*.{png,jpg}").test("b.jpeg")).toBe(false)
   })
 
+  it("vírgula e chaves fora de um {...} fechado são literais", () => {
+    expect(globParaRegex("a,b").test("a,b")).toBe(true)
+    expect(globParaRegex("a,b").test("abc")).toBe(false)
+    expect(globParaRegex("a,b").test("xb")).toBe(false)
+    expect(globParaRegex("a}b").test("a}b")).toBe(true)
+    expect(globParaRegex("a{b").test("a{b")).toBe(true)
+    expect(globParaRegex("{a,b").test("{a,b")).toBe(true)
+  })
+
+  it("metacaracteres de regex no glob são literais", () => {
+    expect(globParaRegex("a.b+(c)|$^[d]\\").test("a.b+(c)|$^[d]\\")).toBe(true)
+    expect(globParaRegex("a.b").test("axb")).toBe(false)
+  })
+
   it("casaAlgum testa contra qualquer glob da lista", () => {
     const casa = casaAlgum(["docs/**", "**/*.md"])
     expect(casa("docs/x.ts")).toBe(true)

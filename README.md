@@ -71,10 +71,12 @@ jobs:
   ci:
     uses: nadairafael/ci/.github/workflows/ci-node.yml@v1
     with:
-      runner: ${{ vars.NAD_CI_RUNNER || '["self-hosted","macOS"]' }}
+      runner: '["ubuntu-latest"]'
       scripts: '["typecheck","lint","test"]'
-      env: '{"WRANGLER_SEND_METRICS":"false"}'
+      env: '{"CI":"true"}'
 ```
+
+Sem `runner`, o job roda em `["self-hosted","macOS"]` (o padrão do input).
 
 ## Segurança (`seguranca.yml`)
 
