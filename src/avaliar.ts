@@ -1,6 +1,9 @@
 import { ARQUIVOS_SENSIVEIS, type Config, IGNORAR_PADRAO, LABEL_APROVADO_PADRAO, SEMPRE_CONTA } from "./config.js"
 import { casaAlgum } from "./glob.js"
 
+// The most files the "list pull request files" endpoint returns (github.ts stops there).
+export const MAX_ARQUIVOS_API = 3000
+
 export interface Arquivo {
   readonly filename: string
   // Set on renames: a rename touches both paths, so moving code into docs/ is not a docs-only PR.
@@ -43,6 +46,11 @@ const falha = (motivo: string): Resultado => ({
 export const avaliar = (e: Entrada): Resultado => {
   if (e.shaDoRun !== undefined && e.headSha !== e.shaDoRun) {
     return falha(`O PR mudou depois do disparo: o head é ${e.headSha}, e este run é do commit ${e.shaDoRun}.`)
+  }
+  if (e.changedFiles > MAX_ARQUIVOS_API) {
+    return falha(
+      `O PR tem ${e.changedFiles} arquivos, e a API do GitHub lista no máximo ${MAX_ARQUIVOS_API}: o portão não confere uma lista incompleta. Divida o PR.`,
+    )
   }
   if (e.arquivos.length < e.changedFiles) {
     return falha(

@@ -15,6 +15,7 @@ interface Falso {
   arquivos?: Effect.Effect<ReadonlyArray<Arquivo>, ErroApi>
   comentarioFalha?: boolean
   configErro?: boolean
+  configMensagem?: string
   pr?: PrDaApi
 }
 
@@ -26,7 +27,7 @@ const montar = (f: Falso = {}) => {
     lerArquivos: () => f.arquivos ?? Effect.succeed([{ filename: "src/a.ts", additions: 10, deletions: 0 }]),
     lerConfig: () =>
       f.configErro
-        ? Effect.fail(new ConfigInvalida({ mensagem: ".github/portao.json no base não é JSON válido" }))
+        ? Effect.fail(new ConfigInvalida({ mensagem: f.configMensagem ?? ".github/portao.json no base não é JSON válido" }))
         : Effect.succeed(f.config ?? Option.some<Config>({ tamanho: { limite: 400 } })),
     labelAplicadaPor: () => Effect.succeed(Option.none()),
     gravarComentario: (_n, corpo) =>
@@ -87,6 +88,9 @@ it.effect("dispatch compara o head com o commit do run", () => {
     const r = yield* programa(m.amb({ evento: "workflow_dispatch", payload: {}, prNumero: "7", sha: "outro" }))
     expect(r.ok).toBe(false)
     expect(m.log.join("\n")).toContain("O PR mudou depois do disparo")
+    // The failure goes on the commit the run was for, and the comment of the new head is left alone.
+    expect(m.status.map((s) => [s.sha, s.estado])).toEqual([["outro", "failure"]])
+    expect(m.comentarios).toEqual([])
   }).pipe(Effect.provide(m.layer))
 })
 
@@ -106,5 +110,26 @@ it.effect("config inválida no base reprova com a mensagem da config", () => {
     const r = yield* programa(m.amb())
     expect(r.ok).toBe(false)
     expect(m.comentarios[0]).toContain("- .github/portao.json no base não é JSON válido")
+  }).pipe(Effect.provide(m.layer))
+})
+
+it.effect("dispatch no head atual grava no head e comenta", () => {
+  const m = montar()
+  return Effect.gen(function* () {
+    const r = yield* programa(m.amb({ evento: "workflow_dispatch", payload: {}, prNumero: "7", sha: "headsha" }))
+    expect(r.ok).toBe(true)
+    expect(m.status.map((s) => s.sha)).toEqual(["headsha"])
+    expect(m.comentarios.length).toBe(1)
+  }).pipe(Effect.provide(m.layer))
+})
+
+it.effect("um motivo com várias linhas sai numa anotação só, com as quebras escapadas", () => {
+  const m = montar({ configErro: true, configMensagem: ".github/portao.json inválido: Expected number\n  at [\"tamanho\"][\"limite\"]" })
+  return Effect.gen(function* () {
+    yield* programa(m.amb())
+    const erros = m.log.filter((l) => l.startsWith("::error"))
+    expect(erros).toEqual([
+      '::error title=Portão::.github/portao.json inválido: Expected number%0A  at ["tamanho"]["limite"]',
+    ])
   }).pipe(Effect.provide(m.layer))
 })

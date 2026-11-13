@@ -26974,6 +26974,95 @@ var IGNORAR_PADRAO = [
 var SEMPRE_CONTA = ["**/package.json", "**/tsconfig*.json"];
 var ARQUIVOS_SENSIVEIS = [".github/portao.json", ".github/workflows/portao.yml"];
 
+// src/glob.ts
+var globParaRegex = (glob) => {
+  let re = "";
+  let emChaves = false;
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === "*" && glob[i + 1] === "*") {
+      if (glob[i + 2] === "/") {
+        re += "(?:.*/)?";
+        i += 2;
+      } else {
+        re += ".*";
+        i += 1;
+      }
+    } else if (c === "*") re += "[^/]*";
+    else if (c === "?") re += "[^/]";
+    else if (c === "{" && !emChaves && glob.indexOf("}", i + 1) !== -1) {
+      re += "(?:";
+      emChaves = true;
+    } else if (c === "}" && emChaves) {
+      re += ")";
+      emChaves = false;
+    } else if (c === "," && emChaves) re += "|";
+    else re += c.replace(/[.+^$(){}|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${re}$`);
+};
+var casaAlgum = (globs) => {
+  const regexes = globs.map(globParaRegex);
+  return (caminho) => regexes.some((re) => re.test(caminho));
+};
+
+// src/avaliar.ts
+var MAX_ARQUIVOS_API = 3e3;
+var caminhos = (a) => a.previous_filename === void 0 ? [a.filename] : [a.filename, a.previous_filename];
+var falha = (motivo) => ({
+  ok: false,
+  motivos: [motivo],
+  contados: [],
+  aprovado: false,
+  tipo: "normal",
+  sensiveis: []
+});
+var avaliar = (e) => {
+  if (e.shaDoRun !== void 0 && e.headSha !== e.shaDoRun) {
+    return falha(`O PR mudou depois do disparo: o head \xE9 ${e.headSha}, e este run \xE9 do commit ${e.shaDoRun}.`);
+  }
+  if (e.changedFiles > MAX_ARQUIVOS_API) {
+    return falha(
+      `O PR tem ${e.changedFiles} arquivos, e a API do GitHub lista no m\xE1ximo ${MAX_ARQUIVOS_API}: o port\xE3o n\xE3o confere uma lista incompleta. Divida o PR.`
+    );
+  }
+  if (e.arquivos.length < e.changedFiles) {
+    return falha(
+      `A lista de arquivos lida tem ${e.arquivos.length} de ${e.changedFiles} arquivos do PR: o port\xE3o n\xE3o confere uma lista incompleta.`
+    );
+  }
+  const ehSensivel = casaAlgum(ARQUIVOS_SENSIVEIS);
+  const sensiveis = [...new Set(e.arquivos.flatMap(caminhos).filter(ehSensivel))];
+  const base = { contados: [], aprovado: false, sensiveis };
+  const config = e.config;
+  if (config?.isento && e.headRef === config.isento.headRef && e.autor === config.isento.autor) {
+    return { ...base, ok: true, motivos: [], tipo: "isento" };
+  }
+  if (config?.soDocs) {
+    const ehDoc = casaAlgum(config.soDocs);
+    if (e.arquivos.length > 0 && e.arquivos.every((a) => caminhos(a).every(ehDoc))) {
+      return { ...base, ok: true, motivos: [], tipo: "soDocs" };
+    }
+  }
+  const tamanho = config?.tamanho;
+  if (!tamanho) return { ...base, ok: true, motivos: [], tipo: "semRegras" };
+  const conta = casaAlgum(SEMPRE_CONTA);
+  const ignora = casaAlgum([...IGNORAR_PADRAO, ...tamanho.ignorar ?? []]);
+  const contados = e.arquivos.filter((a) => conta(a.filename) || !ignora(a.filename)).map((a) => ({ arquivo: a.filename, linhas: a.additions + a.deletions }));
+  const total = contados.reduce((soma, c) => soma + c.linhas, 0);
+  const label = tamanho.labelAprovado ?? LABEL_APROVADO_PADRAO;
+  const temLabel = e.labels.includes(label);
+  const aprovado = temLabel && e.labelAplicadaPeloDono;
+  const motivos = [];
+  if (total > tamanho.limite && !aprovado) {
+    motivos.push(`O PR soma ${total} linhas de l\xF3gica, acima do limite de ${tamanho.limite}.`);
+    if (temLabel) {
+      motivos.push(`A label \xAB${label}\xBB n\xE3o foi aplicada pelo dono do repo, ent\xE3o n\xE3o libera o limite.`);
+    }
+  }
+  return { ok: motivos.length === 0, motivos, contados, total, limite: tamanho.limite, aprovado, tipo: "normal", sensiveis };
+};
+
 // src/github.ts
 var MARCADOR = "<!-- portao:nadairafael/ci -->";
 var ErroApi = class extends Data_exports.TaggedError("ErroApi") {
@@ -27044,24 +27133,28 @@ var githubLive = (acesso) => Layer_exports.effect(
         onSome: () => Effect_exports.void
       }))
     );
-    const paginado = (item, caminho) => Effect_exports.gen(function* () {
+    const paginado = (item, caminho, maxPaginas = Number.POSITIVE_INFINITY) => Effect_exports.gen(function* () {
       const todos = [];
-      for (let pagina = 1; ; pagina++) {
+      for (let pagina = 1; pagina <= maxPaginas; pagina++) {
         const lidos = yield* ler(Schema_exports.Array(item), `${caminho}?per_page=100&page=${pagina}`);
         todos.push(...lidos);
         if (lidos.length < 100) return todos;
       }
+      return todos;
     });
     return GitHub.of({
       lerPr: (numero) => ler(PrDaApi, `/repos/${acesso.repo}/pulls/${numero}`),
-      lerArquivos: (numero) => paginado(ArquivoDaApi, `/repos/${acesso.repo}/pulls/${numero}/files`).pipe(
-        Effect_exports.map(
-          (as4) => as4.map((a) => ({
-            filename: a.filename,
-            previous_filename: a.previous_filename,
-            additions: a.additions,
-            deletions: a.deletions
-          }))
+      lerArquivos: (numero) => (
+        // The API lists at most MAX_ARQUIVOS_API files: asking for the page after that answers 422.
+        paginado(ArquivoDaApi, `/repos/${acesso.repo}/pulls/${numero}/files`, MAX_ARQUIVOS_API / 100).pipe(
+          Effect_exports.map(
+            (as4) => as4.map((a) => ({
+              filename: a.filename,
+              previous_filename: a.previous_filename,
+              additions: a.additions,
+              deletions: a.deletions
+            }))
+          )
         )
       ),
       lerConfig: (baseSha) => {
@@ -27116,88 +27209,8 @@ var githubLive = (acesso) => Layer_exports.effect(
   })
 );
 
-// src/glob.ts
-var globParaRegex = (glob) => {
-  let re = "";
-  let emChaves = false;
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i];
-    if (c === "*" && glob[i + 1] === "*") {
-      if (glob[i + 2] === "/") {
-        re += "(?:.*/)?";
-        i += 2;
-      } else {
-        re += ".*";
-        i += 1;
-      }
-    } else if (c === "*") re += "[^/]*";
-    else if (c === "?") re += "[^/]";
-    else if (c === "{" && !emChaves && glob.indexOf("}", i + 1) !== -1) {
-      re += "(?:";
-      emChaves = true;
-    } else if (c === "}" && emChaves) {
-      re += ")";
-      emChaves = false;
-    } else if (c === "," && emChaves) re += "|";
-    else re += c.replace(/[.+^$(){}|[\]\\]/g, "\\$&");
-  }
-  return new RegExp(`^${re}$`);
-};
-var casaAlgum = (globs) => {
-  const regexes = globs.map(globParaRegex);
-  return (caminho) => regexes.some((re) => re.test(caminho));
-};
-
-// src/avaliar.ts
-var caminhos = (a) => a.previous_filename === void 0 ? [a.filename] : [a.filename, a.previous_filename];
-var falha = (motivo) => ({
-  ok: false,
-  motivos: [motivo],
-  contados: [],
-  aprovado: false,
-  tipo: "normal",
-  sensiveis: []
-});
-var avaliar = (e) => {
-  if (e.shaDoRun !== void 0 && e.headSha !== e.shaDoRun) {
-    return falha(`O PR mudou depois do disparo: o head \xE9 ${e.headSha}, e este run \xE9 do commit ${e.shaDoRun}.`);
-  }
-  if (e.arquivos.length < e.changedFiles) {
-    return falha(
-      `A lista de arquivos lida tem ${e.arquivos.length} de ${e.changedFiles} arquivos do PR: o port\xE3o n\xE3o confere uma lista incompleta.`
-    );
-  }
-  const ehSensivel = casaAlgum(ARQUIVOS_SENSIVEIS);
-  const sensiveis = [...new Set(e.arquivos.flatMap(caminhos).filter(ehSensivel))];
-  const base = { contados: [], aprovado: false, sensiveis };
-  const config = e.config;
-  if (config?.isento && e.headRef === config.isento.headRef && e.autor === config.isento.autor) {
-    return { ...base, ok: true, motivos: [], tipo: "isento" };
-  }
-  if (config?.soDocs) {
-    const ehDoc = casaAlgum(config.soDocs);
-    if (e.arquivos.length > 0 && e.arquivos.every((a) => caminhos(a).every(ehDoc))) {
-      return { ...base, ok: true, motivos: [], tipo: "soDocs" };
-    }
-  }
-  const tamanho = config?.tamanho;
-  if (!tamanho) return { ...base, ok: true, motivos: [], tipo: "semRegras" };
-  const conta = casaAlgum(SEMPRE_CONTA);
-  const ignora = casaAlgum([...IGNORAR_PADRAO, ...tamanho.ignorar ?? []]);
-  const contados = e.arquivos.filter((a) => conta(a.filename) || !ignora(a.filename)).map((a) => ({ arquivo: a.filename, linhas: a.additions + a.deletions }));
-  const total = contados.reduce((soma, c) => soma + c.linhas, 0);
-  const label = tamanho.labelAprovado ?? LABEL_APROVADO_PADRAO;
-  const temLabel = e.labels.includes(label);
-  const aprovado = temLabel && e.labelAplicadaPeloDono;
-  const motivos = [];
-  if (total > tamanho.limite && !aprovado) {
-    motivos.push(`O PR soma ${total} linhas de l\xF3gica, acima do limite de ${tamanho.limite}.`);
-    if (temLabel) {
-      motivos.push(`A label \xAB${label}\xBB n\xE3o foi aplicada pelo dono do repo, ent\xE3o n\xE3o libera o limite.`);
-    }
-  }
-  return { ok: motivos.length === 0, motivos, contados, total, limite: tamanho.limite, aprovado, tipo: "normal", sensiveis };
-};
+// src/comando.ts
+var escaparDado = (s) => s.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
 
 // src/relatorio.ts
 var labelDe = (config) => config?.tamanho?.labelAprovado ?? LABEL_APROVADO_PADRAO;
@@ -27319,11 +27332,18 @@ var programa = (amb) => Effect_exports.gen(function* () {
       })
     )
   );
-  return yield* publicar(amb, avaliado.r, avaliado.config, pr.number, pr.head.sha);
+  const obsoleto = amb.evento === "workflow_dispatch" && pr.head.sha !== amb.sha;
+  return yield* publicar(
+    amb,
+    avaliado.r,
+    avaliado.config,
+    obsoleto ? void 0 : pr.number,
+    obsoleto ? amb.sha : pr.head.sha
+  );
 });
 var publicar = (amb, r, config, numero, sha) => Effect_exports.gen(function* () {
   const gh = yield* GitHub;
-  const avisar = (o) => (e) => Effect_exports.sync(() => amb.log(`::warning title=Port\xE3o::n\xE3o consegui ${o}: ${e.mensagem}`));
+  const avisar = (o) => (e) => Effect_exports.sync(() => amb.log(`::warning title=Port\xE3o::${escaparDado(`n\xE3o consegui ${o}: ${e.mensagem}`)}`));
   if (numero !== void 0) {
     yield* gh.gravarComentario(numero, comentario(r, config, amb.runUrl)).pipe(Effect_exports.catch(avisar("comentar no PR")));
   }
@@ -27332,7 +27352,7 @@ var publicar = (amb, r, config, numero, sha) => Effect_exports.gen(function* () 
       Effect_exports.catch(avisar("gravar o status \xABportao\xBB"))
     );
   }
-  for (const m of r.motivos) amb.log(`::error title=Port\xE3o::${m}`);
+  for (const m of r.motivos) amb.log(`::error title=Port\xE3o::${escaparDado(m)}`);
   const texto = summary(r, config);
   amb.log(texto);
   amb.anexarSummary(`${texto}

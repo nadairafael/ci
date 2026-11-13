@@ -1,5 +1,6 @@
 import { Data, Effect, Option, Schema } from "effect"
 import { avaliar, type Resultado } from "./avaliar.js"
+import { escaparDado } from "./comando.js"
 import { type Config, LABEL_APROVADO_PADRAO } from "./config.js"
 import { GitHub, PrDaApi } from "./github.js"
 import { comentario, descricaoStatus, summary } from "./relatorio.js"
@@ -77,7 +78,16 @@ export const programa = (amb: Ambiente): Effect.Effect<{ readonly ok: boolean },
         })
       ),
     )
-    return yield* publicar(amb, avaliado.r, avaliado.config, pr.number, pr.head.sha)
+    // A dispatched run for a head that has since moved judges an old commit: its failure goes on that
+    // commit, and it leaves the comment alone, so it never overwrites the verdict on the new head.
+    const obsoleto = amb.evento === "workflow_dispatch" && pr.head.sha !== amb.sha
+    return yield* publicar(
+      amb,
+      avaliado.r,
+      avaliado.config,
+      obsoleto ? undefined : pr.number,
+      obsoleto ? amb.sha : pr.head.sha,
+    )
   })
 
 // Comment, commit status, annotations and summary. A failed write is a warning: the verdict stands.
@@ -85,7 +95,7 @@ const publicar = (amb: Ambiente, r: Resultado, config: Config | undefined, numer
   Effect.gen(function* () {
     const gh = yield* GitHub
     const avisar = (o: string) => (e: { readonly mensagem: string }) =>
-      Effect.sync(() => amb.log(`::warning title=Portão::não consegui ${o}: ${e.mensagem}`))
+      Effect.sync(() => amb.log(`::warning title=Portão::${escaparDado(`não consegui ${o}: ${e.mensagem}`)}`))
     if (numero !== undefined) {
       yield* gh.gravarComentario(numero, comentario(r, config, amb.runUrl)).pipe(Effect.catch(avisar("comentar no PR")))
     }
@@ -94,7 +104,7 @@ const publicar = (amb: Ambiente, r: Resultado, config: Config | undefined, numer
         Effect.catch(avisar("gravar o status «portao»")),
       )
     }
-    for (const m of r.motivos) amb.log(`::error title=Portão::${m}`)
+    for (const m of r.motivos) amb.log(`::error title=Portão::${escaparDado(m)}`)
     const texto = summary(r, config)
     amb.log(texto)
     amb.anexarSummary(`${texto}\n`)

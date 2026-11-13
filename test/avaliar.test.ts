@@ -95,6 +95,14 @@ describe("avaliar", () => {
     expect(r.motivos[0]).toContain("3 de 5 arquivos")
   })
 
+  it("mais de 3000 arquivos reprova dizendo o limite da API", () => {
+    const r = avaliar(entrada({ changedFiles: 3001, arquivos: [arquivo("a.ts", 1)] }))
+    expect(r.ok).toBe(false)
+    expect(r.motivos).toEqual([
+      "O PR tem 3001 arquivos, e a API do GitHub lista no máximo 3000: o portão não confere uma lista incompleta. Divida o PR.",
+    ])
+  })
+
   it("sha do disparo diferente reprova", () => {
     const r = avaliar(entrada({ shaDoRun: "b", headSha: "a" }))
     expect(r.ok).toBe(false)

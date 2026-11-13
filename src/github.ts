@@ -1,6 +1,6 @@
 import { Context, Data, Effect, Layer, Option, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/http"
-import type { Arquivo } from "./avaliar.js"
+import { type Arquivo, MAX_ARQUIVOS_API } from "./avaliar.js"
 import { type Config, ConfigInvalida, decodeConfig } from "./config.js"
 
 // Hidden marker that identifies the gate's own comment, so it is edited and never duplicated.
@@ -116,25 +116,28 @@ export const githubLive = (acesso: Acesso): Layer.Layer<GitHub, never, HttpClien
           })),
         )
 
-      // Pages of 100 until a short page.
+      // Pages of 100 until a short page, or until `maxPaginas`.
       const paginado = <S extends Schema.Constraint & { readonly DecodingServices: never }>(
         item: S,
         caminho: string,
+        maxPaginas = Number.POSITIVE_INFINITY,
       ): Effect.Effect<ReadonlyArray<S["Type"]>, ErroApi> =>
         Effect.gen(function* () {
           const todos: Array<S["Type"]> = []
-          for (let pagina = 1;; pagina++) {
+          for (let pagina = 1; pagina <= maxPaginas; pagina++) {
             const lidos = yield* ler(Schema.Array(item), `${caminho}?per_page=100&page=${pagina}`)
             todos.push(...lidos)
             if (lidos.length < 100) return todos
           }
+          return todos
         })
 
       return GitHub.of({
         lerPr: (numero) => ler(PrDaApi, `/repos/${acesso.repo}/pulls/${numero}`),
 
         lerArquivos: (numero) =>
-          paginado(ArquivoDaApi, `/repos/${acesso.repo}/pulls/${numero}/files`).pipe(
+          // The API lists at most MAX_ARQUIVOS_API files: asking for the page after that answers 422.
+          paginado(ArquivoDaApi, `/repos/${acesso.repo}/pulls/${numero}/files`, MAX_ARQUIVOS_API / 100).pipe(
             Effect.map((as) =>
               as.map((a) => ({
                 filename: a.filename,

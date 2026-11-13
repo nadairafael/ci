@@ -1,5 +1,6 @@
 // Pure: the copy the security workflow writes (summary, annotations, status, comment). pt-BR, and
 // pinned by the tests: it is part of the contract.
+import { escaparDado, escaparPropriedade } from "../comando.js"
 import { type Achado, type Ferramenta, FERRAMENTAS, type Situacao } from "./achados.js"
 
 // Hidden marker of the security comment, distinct from the gate's.
@@ -103,10 +104,6 @@ export const summary = (r: Resultado): string => {
   if (r.sensiveis.length > 0) linhas.push("", AVISO_SENSIVEIS(r.sensiveis))
   return linhas.join("\n")
 }
-
-// Workflow command escaping: https://github.com/actions/toolkit/blob/main/packages/core/src/command.ts
-const escaparDado = (s: string) => s.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A")
-const escaparPropriedade = (s: string) => escaparDado(s).replace(/:/g, "%3A").replace(/,/g, "%2C")
 
 // One annotation per finding (on the file and line, shown in the PR's "Files changed"), and one per
 // tool that did not run. `::error` with `bloquear`, `::warning` otherwise. Never a secret's value.

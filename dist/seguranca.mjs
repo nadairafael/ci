@@ -26956,6 +26956,9 @@ var decodeConfig = (u) => Schema_exports.decodeUnknownEffect(Config, { onExcessP
   Effect_exports.mapError((erro2) => new ConfigInvalida({ mensagem: `.github/portao.json inv\xE1lido: ${erro2.message}` }))
 );
 
+// src/avaliar.ts
+var MAX_ARQUIVOS_API = 3e3;
+
 // src/github.ts
 var MARCADOR = "<!-- portao:nadairafael/ci -->";
 var ErroApi = class extends Data_exports.TaggedError("ErroApi") {
@@ -27026,24 +27029,28 @@ var githubLive = (acesso) => Layer_exports.effect(
         onSome: () => Effect_exports.void
       }))
     );
-    const paginado = (item, caminho) => Effect_exports.gen(function* () {
+    const paginado = (item, caminho, maxPaginas = Number.POSITIVE_INFINITY) => Effect_exports.gen(function* () {
       const todos = [];
-      for (let pagina = 1; ; pagina++) {
+      for (let pagina = 1; pagina <= maxPaginas; pagina++) {
         const lidos = yield* ler(Schema_exports.Array(item), `${caminho}?per_page=100&page=${pagina}`);
         todos.push(...lidos);
         if (lidos.length < 100) return todos;
       }
+      return todos;
     });
     return GitHub.of({
       lerPr: (numero) => ler(PrDaApi, `/repos/${acesso.repo}/pulls/${numero}`),
-      lerArquivos: (numero) => paginado(ArquivoDaApi, `/repos/${acesso.repo}/pulls/${numero}/files`).pipe(
-        Effect_exports.map(
-          (as4) => as4.map((a) => ({
-            filename: a.filename,
-            previous_filename: a.previous_filename,
-            additions: a.additions,
-            deletions: a.deletions
-          }))
+      lerArquivos: (numero) => (
+        // The API lists at most MAX_ARQUIVOS_API files: asking for the page after that answers 422.
+        paginado(ArquivoDaApi, `/repos/${acesso.repo}/pulls/${numero}/files`, MAX_ARQUIVOS_API / 100).pipe(
+          Effect_exports.map(
+            (as4) => as4.map((a) => ({
+              filename: a.filename,
+              previous_filename: a.previous_filename,
+              additions: a.additions,
+              deletions: a.deletions
+            }))
+          )
         )
       ),
       lerConfig: (baseSha) => {
@@ -27097,6 +27104,10 @@ var githubLive = (acesso) => Layer_exports.effect(
     });
   })
 );
+
+// src/comando.ts
+var escaparDado = (s) => s.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+var escaparPropriedade = (s) => escaparDado(s).replace(/:/g, "%3A").replace(/,/g, "%2C");
 
 // src/seguranca/achados.ts
 var FERRAMENTAS = ["osv", "semgrep", "gitleaks"];
@@ -27328,8 +27339,6 @@ var summary = (r) => {
   if (r.sensiveis.length > 0) linhas.push("", AVISO_SENSIVEIS(r.sensiveis));
   return linhas.join("\n");
 };
-var escaparDado = (s) => s.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
-var escaparPropriedade = (s) => escaparDado(s).replace(/:/g, "%3A").replace(/,/g, "%2C");
 var anotacoes = (r) => {
   const nivel = r.bloquear ? "error" : "warning";
   const deAchados = achadosDe(r).map((a) => {
@@ -27393,7 +27402,7 @@ var programa = (amb) => Effect_exports.gen(function* () {
   const gh = yield* GitHub;
   const r = resultado(amb);
   const ok2 = aprovado(r);
-  const avisar = (o) => (e) => Effect_exports.sync(() => amb.log(`::warning title=Seguran\xE7a::n\xE3o consegui ${o}: ${e.mensagem}`));
+  const avisar = (o) => (e) => Effect_exports.sync(() => amb.log(`::warning title=Seguran\xE7a::${escaparDado(`n\xE3o consegui ${o}: ${e.mensagem}`)}`));
   for (const linha of anotacoes(r)) amb.log(linha);
   const texto = summary(r);
   amb.log(texto);

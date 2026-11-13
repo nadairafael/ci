@@ -1,4 +1,5 @@
 import { Effect } from "effect"
+import { escaparDado } from "../comando.js"
 import { GitHub } from "../github.js"
 import {
   type Ferramenta,
@@ -62,7 +63,7 @@ export const programa = (amb: Ambiente): Effect.Effect<{ readonly ok: boolean },
     const r = resultado(amb)
     const ok = aprovado(r)
     const avisar = (o: string) => (e: { readonly mensagem: string }) =>
-      Effect.sync(() => amb.log(`::warning title=Segurança::não consegui ${o}: ${e.mensagem}`))
+      Effect.sync(() => amb.log(`::warning title=Segurança::${escaparDado(`não consegui ${o}: ${e.mensagem}`)}`))
 
     for (const linha of anotacoes(r)) amb.log(linha)
     const texto = summary(r)

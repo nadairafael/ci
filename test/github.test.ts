@@ -106,6 +106,22 @@ it.effect("lerArquivos pagina", () => {
   }).pipe(Effect.provide(layer))
 })
 
+it.effect("lerArquivos para em 3000 arquivos: a página 31 responderia 422", () => {
+  const pagina = Array.from({ length: 100 }, (_, i) => ({ filename: `f${i}.ts`, additions: 1, deletions: 0 }))
+  const rotas = Object.fromEntries(
+    Array.from({ length: 30 }, (_, i) => [`GET /repos/o/r/pulls/1/files?per_page=100&page=${i + 1}`, { status: 200, json: pagina }]),
+  )
+  const { layer, chamadas } = comRotas({
+    ...rotas,
+    "GET /repos/o/r/pulls/1/files?per_page=100&page=31": { status: 422, json: {} },
+  })
+  return Effect.gen(function* () {
+    const gh = yield* GitHub
+    expect((yield* gh.lerArquivos(1)).length).toBe(3000)
+    expect(chamadas.length).toBe(30)
+  }).pipe(Effect.provide(layer))
+})
+
 it.effect("gravarStatus usa o contexto portao", () => {
   const { layer, chamadas } = comRotas({ "POST /repos/o/r/statuses/abc": { status: 201, json: {} } })
   return Effect.gen(function* () {
