@@ -27006,6 +27006,7 @@ var githubLive = (acesso) => Layer_exports.effect(
   GitHub,
   Effect_exports.gen(function* () {
     const http = yield* HttpClient_exports.HttpClient;
+    const marcador = acesso.marcador ?? MARCADOR;
     const pedir = (metodo, caminho, corpo) => {
       const base = HttpClientRequest_exports.make(metodo)(`${acesso.api}${caminho}`).pipe(
         HttpClientRequest_exports.setHeaders({
@@ -27099,15 +27100,15 @@ var githubLive = (acesso) => Layer_exports.effect(
           return Option_exports.fromNullishOr(ultimo?.actor?.login);
         })
       ),
-      gravarComentario: (numero, corpo) => paginado(Comentario, `/repos/${acesso.repo}/issues/${numero}/comments`).pipe(
+      gravarComentario: (numero, corpo, soEditar = false) => paginado(Comentario, `/repos/${acesso.repo}/issues/${numero}/comments`).pipe(
         Effect_exports.flatMap((comentarios) => {
-          const meu = comentarios.find((c) => c.body?.includes(MARCADOR));
-          return meu ? escrever("PATCH", `/repos/${acesso.repo}/issues/comments/${meu.id}`, { body: corpo }) : escrever("POST", `/repos/${acesso.repo}/issues/${numero}/comments`, { body: corpo });
+          const meu = comentarios.find((c) => c.body?.includes(marcador));
+          return meu ? escrever("PATCH", `/repos/${acesso.repo}/issues/comments/${meu.id}`, { body: corpo }) : soEditar ? Effect_exports.void : escrever("POST", `/repos/${acesso.repo}/issues/${numero}/comments`, { body: corpo });
         })
       ),
       gravarStatus: (sha, estado, descricao, url) => escrever("POST", `/repos/${acesso.repo}/statuses/${sha}`, {
         state: estado,
-        context: "portao",
+        context: acesso.contexto ?? "portao",
         description: descricao,
         target_url: url
       })

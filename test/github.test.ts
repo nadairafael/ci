@@ -151,3 +151,32 @@ it.effect("lerArquivos guarda o previous_filename dos renomeios", () => {
     expect((yield* gh.lerArquivos(1))[0]!.previous_filename).toBe("src/x.ts")
   }).pipe(Effect.provide(layer))
 })
+
+it.effect("contexto e marcador próprios: status «seguranca» e o comentário do outro marcador", () => {
+  const fake = httpFalso(API, {
+    "POST /repos/o/r/statuses/abc": { status: 201, json: {} },
+    "GET /repos/o/r/issues/1/comments?per_page=100&page=1": {
+      status: 200, json: [{ id: 9, body: `${MARCADOR}\nportão` }, { id: 11, body: "<!-- outro -->\nantigo" }],
+    },
+    "PATCH /repos/o/r/issues/comments/11": { status: 200, json: {} },
+  })
+  const layer = githubLive({ ...acesso, contexto: "seguranca", marcador: "<!-- outro -->" }).pipe(Layer.provide(fake.layer))
+  return Effect.gen(function* () {
+    const gh = yield* GitHub
+    yield* gh.gravarStatus("abc", "success", "nenhum achado novo", "https://run")
+    yield* gh.gravarComentario(1, "<!-- outro -->\nnovo")
+    expect((fake.chamadas[0]!.corpo as { context: string }).context).toBe("seguranca")
+    expect(fake.chamadas.map((c) => `${c.metodo} ${c.url}`).at(-1)).toBe("PATCH /repos/o/r/issues/comments/11")
+  }).pipe(Effect.provide(layer))
+})
+
+it.effect("gravarComentario com soEditar não cria quando não existe", () => {
+  const { layer, chamadas } = comRotas({
+    "GET /repos/o/r/issues/1/comments?per_page=100&page=1": { status: 200, json: [{ id: 7, body: "oi" }] },
+  })
+  return Effect.gen(function* () {
+    const gh = yield* GitHub
+    yield* gh.gravarComentario(1, "x", true)
+    expect(chamadas.map((c) => c.metodo)).toEqual(["GET"])
+  }).pipe(Effect.provide(layer))
+})
