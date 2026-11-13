@@ -2,6 +2,8 @@
 # no install. It comments the verdict on the PR and writes the commit status «portao» on the PR's
 # head, which is the context a ruleset requires (the job's own check is named «<caller job> / portao»).
 # The caller grants the permissions: contents read, pull-requests write, issues write, statuses write.
+# The README's caller runs on pull_request_target, so a PR cannot change the caller its own run uses;
+# that is safe here because nothing from the PR is checked out or run, the gate only reads the API.
 name: Portão
 
 on:
@@ -21,6 +23,8 @@ on:
 
 jobs:
   portao:
+    # An `edited` event only matters when it changed the base branch; a title or body edit is skipped.
+    if: github.event.action != 'edited' || github.event.changes.base.ref.from
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:

@@ -56,7 +56,7 @@ describe("comentario", () => {
 
   it("arquivo sensível acrescenta o aviso", () => {
     const c = comentario({ ...base, tipo: "semRegras", sensiveis: [".github/portao.json", ".github/workflows/portao.yml"] }, undefined, RUN)
-    expect(c).toContain("⚠️ Este PR mexe no portão (.github/portao.json, .github/workflows/portao.yml): precisa de olho humano. Regras novas só valem depois do merge.")
+    expect(c).toContain("⚠️ Este PR mexe no portão ou em workflows (.github/portao.json, .github/workflows/portao.yml): precisa de olho humano. Um workflow do PR pode gravar o status «portao», e regras novas só valem depois do merge.")
   })
 })
 

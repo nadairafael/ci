@@ -41,7 +41,7 @@ export const comentario = (r: Resultado, config: Config | undefined, runUrl: str
   }
   if (r.sensiveis.length > 0) {
     linhas.push(
-      `⚠️ Este PR mexe no portão (${r.sensiveis.join(", ")}): precisa de olho humano. Regras novas só valem depois do merge.`,
+      `⚠️ Este PR mexe no portão ou em workflows (${r.sensiveis.join(", ")}): precisa de olho humano. Um workflow do PR pode gravar o status «portao», e regras novas só valem depois do merge.`,
     )
   }
   linhas.push(`[Ver o run](${runUrl})`)

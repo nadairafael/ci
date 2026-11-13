@@ -141,6 +141,13 @@ describe("avaliar", () => {
   })
 })
 
+describe("workflows", () => {
+  it("qualquer workflow do PR é sensível: ele pode gravar o status «portao»", () => {
+    const r = avaliar(entrada({ arquivos: [arquivo(".github/workflows/outro.yml", 5), arquivo(".github/dependabot.yml", 3)] }))
+    expect(r.sensiveis).toEqual([".github/workflows/outro.yml"])
+  })
+})
+
 describe("renomeios", () => {
   it("código movido para docs/ não é PR só de documentação", () => {
     const r = avaliar(entrada({ arquivos: [{ filename: "docs/x.md", previous_filename: "src/x.ts", additions: 0, deletions: 0 }] }))

@@ -12,15 +12,18 @@ O portão roda nas máquinas do GitHub, responde em segundos e escreve o motivo 
    ```yaml
    name: Portão
    on:
-     pull_request:
+     # pull_request_target roda o caller como ele está na base: um PR não muda o caller do próprio run.
+     pull_request_target:
        branches: [main]
-       types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+       types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
      workflow_dispatch:
        inputs:
          pr: { description: Número do PR, type: number, required: true }
    concurrency:
-     group: portao-${{ github.ref }}
-     cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+     # Um grupo por PR. O disparo manual e o `edited` sem troca de base (que o portão pula) ficam num
+     # grupo só deles: nunca cancelam um run de verdade, nem são cancelados.
+     group: portao-${{ (github.event.action == 'edited' && !github.event.changes.base) && github.run_id || github.event.pull_request.number || github.run_id }}
+     cancel-in-progress: true
    permissions:
      contents: read
    jobs:
@@ -35,6 +38,8 @@ O portão roda nas máquinas do GitHub, responde em segundos e escreve o motivo 
          pr: ${{ format('{0}', inputs.pr) }}
    ```
 
+   O `pull_request_target` é seguro aqui porque o portão não baixa nem roda nada do PR: ele só lê o PR pela API. Ele não serve para o `seguranca.yml`, que roda as ferramentas no código do PR. O `edited` faz o portão rodar de novo quando o PR muda de base, e só nesse caso. Um caller antigo, com `pull_request`, continua funcionando.
+
    Depois, criar o `.github/portao.json` com as regras que fazem sentido para o repo (veja abaixo).
 3. **Criar a label de aprovação**, se o repo usar a regra de tamanho: `gh label create aprovado-nadai`.
 
@@ -42,7 +47,7 @@ Se o repo exige checks por ruleset, exija o contexto **`portao`** (o commit stat
 
 ## Regras (`.github/portao.json`)
 
-Nenhuma regra fica ligada sem config. O arquivo é lido do **branch base** do PR. Por isso, mudar o config num PR só vale depois do merge, e o PR não consegue afrouxar o próprio portão. Um PR que mexe no `portao.json` ou no `portao.yml` recebe um aviso de "olho humano" no comentário.
+Nenhuma regra fica ligada sem config. O arquivo é lido do **branch base** do PR. Por isso, mudar o config num PR só vale depois do merge, e o PR não consegue afrouxar o próprio portão. Um PR que mexe no `portao.json` ou em qualquer arquivo de `.github/workflows/` recebe um aviso de "olho humano" no comentário: qualquer workflow pode gravar o status `portao`, e em conta pessoal nada impede um workflow novo do PR de fazer isso.
 
 | Campo | O que faz |
 |---|---|

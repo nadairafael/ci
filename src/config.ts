@@ -44,5 +44,6 @@ export const IGNORAR_PADRAO: ReadonlyArray<string> = [
 // Checked before IGNORAR_PADRAO: these JSON files are code-like and count.
 export const SEMPRE_CONTA: ReadonlyArray<string> = ["**/package.json", "**/tsconfig*.json"]
 
-// A PR that touches these changes the gate itself and needs a human's eye.
-export const ARQUIVOS_SENSIVEIS: ReadonlyArray<string> = [".github/portao.json", ".github/workflows/portao.yml"]
+// A PR that touches these needs a human's eye: the config changes the gate, and any workflow can
+// write the «portao» status (in a personal account nothing stops a workflow added by the PR).
+export const ARQUIVOS_SENSIVEIS: ReadonlyArray<string> = [".github/portao.json", ".github/workflows/**"]
