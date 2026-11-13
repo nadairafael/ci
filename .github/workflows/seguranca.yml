@@ -183,7 +183,7 @@ jobs:
           ESCOPO: ${{ steps.escopo.outputs.escopo }}
           MERGE_BASE: ${{ steps.diff.outputs.merge-base }}
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           out="$RUNNER_TEMP/seguranca"
           cfg=()
           if [ "$ESCOPO" = diff ]; then cfg=(--config "$out/supressao/osv-scanner.toml"); fi
@@ -206,7 +206,7 @@ jobs:
           BASE: ${{ steps.escopo.outputs.base }}
           HEAD: ${{ steps.escopo.outputs.head }}
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           out="$RUNNER_TEMP/seguranca"
           args=()
           if [ "$ESCOPO" = diff ]; then
@@ -225,7 +225,7 @@ jobs:
           MERGE_BASE: ${{ steps.diff.outputs.merge-base }}
           CONFIGS: ${{ inputs.semgrep-config }}
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           out="$RUNNER_TEMP/seguranca"
           args=()
           read -ra cs <<<"$CONFIGS"
