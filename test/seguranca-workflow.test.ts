@@ -24,4 +24,12 @@ describe("seguranca.yml", () => {
       expect(runDoPasso(nome)).toMatch(/echo \$\? > "\$out\/[a-z-]+\.exit"/)
     })
   }
+
+  it("o Semgrep instala com hash, do requirements deste repo", () => {
+    const passo = runDoPasso("Instalar Semgrep")
+    expect(passo).toContain("--require-hashes")
+    expect(passo).toContain("-r .seguranca-ci/dist/semgrep-requirements.txt")
+    const req = readFileSync(new URL("../dist/semgrep-requirements.txt", import.meta.url), "utf8")
+    expect(req).toMatch(/^semgrep==\d+\.\d+\.\d+ \\$/m)
+  })
 })

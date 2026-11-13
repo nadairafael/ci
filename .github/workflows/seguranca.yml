@@ -5,8 +5,9 @@
 # Suppression files are read from the base branch, so a PR cannot silence its own findings.
 # The caller grants: contents read, statuses write (and pull-requests write with `bloquear: true`).
 #
-# Tools are pinned by exact version, and the binaries by the SHA-256 written below. They are bumped
-# by hand in this repo: Dependabot does not see versions inside `run:`.
+# Tools are pinned by exact version: the binaries by the SHA-256 written below, Semgrep and its
+# dependencies by the hashes in dist/semgrep-requirements.txt. They are bumped by hand in this repo:
+# Dependabot does not see versions inside `run:`.
 name: Segurança
 
 on:
@@ -46,7 +47,6 @@ jobs:
       OSV_SHA256: 160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b
       GITLEAKS_VERSAO: 8.30.1
       GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
-      SEMGREP_VERSAO: 1.184.0
     steps:
       - name: Escopo e ferramentas
         id: escopo
@@ -167,11 +167,17 @@ jobs:
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSAO}/gitleaks_${GITLEAKS_VERSAO}_linux_x64.tar.gz"
           echo "$GITLEAKS_SHA256  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+      # Semgrep and every dependency come from dist/semgrep-requirements.txt, each one pinned by hash.
       - name: Instalar Semgrep
         id: instalar-semgrep
         if: steps.escopo.outputs.semgrep == 'sim'
         continue-on-error: true
-        run: pipx install --quiet "semgrep==${SEMGREP_VERSAO}"
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/semgrep"
+          "$RUNNER_TEMP/semgrep/bin/pip" install --quiet --disable-pip-version-check --require-hashes --only-binary :all: \
+            -r .seguranca-ci/dist/semgrep-requirements.txt
+          echo "$RUNNER_TEMP/semgrep/bin" >> "$GITHUB_PATH"
 
       # A failed install (download or checksum) does not fail the job by itself: its tool reports
       # "não rodou", and the last step applies `bloquear`. Each tool step records its exit code and
