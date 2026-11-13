@@ -36,6 +36,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: ${{ inputs.node-version-file }}
+          # setup-node >= v5 caches on its own when package.json names npm in packageManager; keep v4's no-cache behaviour.
+          package-manager-cache: false
       - name: Variáveis
         env:
           VARS: ${{ inputs.env }}
