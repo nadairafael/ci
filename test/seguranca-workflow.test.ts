@@ -6,27 +6,30 @@ import { readFileSync } from "node:fs"
 // non-zero because it found something kills the step before `echo $?`, and the later tools skip.
 const workflow = readFileSync(new URL("../.github/workflows/seguranca.yml", import.meta.url), "utf8")
 
-const runDoPasso = (nome: string): string => {
+const runDoPasso = (nome: string): string | undefined => {
   const inicio = workflow.indexOf(`      - name: ${nome}\n`)
-  expect(inicio).toBeGreaterThan(-1)
+  if (inicio === -1) return undefined
   const fim = workflow.indexOf("\n      - name: ", inicio + 1)
   const passo = workflow.slice(inicio, fim === -1 ? undefined : fim)
   const run = passo.indexOf("        run: |\n")
-  expect(run).toBeGreaterThan(-1)
-  return passo.slice(run)
+  return run === -1 ? undefined : passo.slice(run)
 }
 
 describe("seguranca.yml", () => {
-  for (const nome of ["OSV-Scanner", "gitleaks", "Semgrep"]) {
-    it(`o passo ${nome} desliga o -e antes de rodar a ferramenta`, () => {
-      const linhas = runDoPasso(nome).split("\n")
-      expect(linhas[1]?.trim()).toBe("set +e -uo pipefail")
-      expect(runDoPasso(nome)).toMatch(/echo \$\? > "\$out\/[a-z-]+\.exit"/)
+  it("cada passo de ferramenta desliga o -e antes de rodar e grava o exit", () => {
+    const violacoes = ["OSV-Scanner", "gitleaks", "Semgrep"].flatMap((nome) => {
+      const run = runDoPasso(nome)
+      if (run === undefined) return [`${nome}: passo com run não encontrado`]
+      return [
+        ...(run.split("\n")[1]?.trim() === "set +e -uo pipefail" ? [] : [`${nome}: não começa com «set +e -uo pipefail»`]),
+        ...(/echo \$\? > "\$out\/[a-z-]+\.exit"/.test(run) ? [] : [`${nome}: não grava o exit em $out/<nome>.exit`]),
+      ]
     })
-  }
+    expect(violacoes).toEqual([])
+  })
 
   it("o Semgrep instala com hash, do requirements deste repo", () => {
-    const passo = runDoPasso("Instalar Semgrep")
+    const passo = runDoPasso("Instalar Semgrep") ?? ""
     expect(passo).toContain("--require-hashes")
     expect(passo).toContain("-r .seguranca-ci/dist/semgrep-requirements.txt")
     const req = readFileSync(new URL("../dist/semgrep-requirements.txt", import.meta.url), "utf8")
